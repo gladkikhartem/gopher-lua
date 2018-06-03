@@ -50,7 +50,7 @@ print(pVar)`); err != nil {
 	data2, _ := json.Marshal(d2)
 	//log.Printf("DUMP: %# v", pretty.Formatter(d2))
 	log.Printf("LEN: %# v", len(data2))
-	if err := L.DoString(`print("hello")
+	if err := l2.DoString(`print("hello2")
   print(pVar)`); err != nil {
 		panic(err)
 	}

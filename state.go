@@ -7,7 +7,6 @@ package lua
 import (
 	"context"
 	"fmt"
-	"github.com/yuin/gopher-lua/parse"
 	"io"
 	"math"
 	"os"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/yuin/gopher-lua/parse"
 )
 
 const MultRet = -1
@@ -868,6 +869,7 @@ func (ls *LState) callR(nargs, nret, rbase int) {
 		Parent:     ls.currentFrame,
 		TailCall:   0,
 	}, lv, meta)
+
 	if ls.G.MainThread == nil {
 		ls.G.MainThread = ls
 		ls.G.CurrentThread = ls

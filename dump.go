@@ -140,6 +140,8 @@ func (d *dumpLoader) loadState(ptr dump.Ptr) *LState {
 	s.uvcache = d.loadUpvalue(ds.UVCache)
 	s.hasErrorFunc = ds.HasErrorFunc
 	s.Dead = ds.Dead
+	s.mainLoop = mainLoop
+	s.alloc = newAllocator(32)
 	return s
 }
 
@@ -652,8 +654,11 @@ func (d *dumpLoader) loadGFunction(ptr dump.Ptr) LGFunction {
 	}
 	d.Loaded[id] = true
 
+	if dgf.Name == "github.com/gladkikhartem/gopher-lua.basePrint" {
+		return basePrint
+	}
 	return func(*LState) int {
-		log.Print("TODO: LOAD EXTERNAL FUNCTION ", dgf)
+		log.Printf("TODO: LOAD EXTERNAL FUNCTION %v \n %v:%v ", dgf.Name, dgf.File, dgf.Line)
 		return 0
 	}
 	//f := runtime.FuncForPC(reflect.ValueOf(gf).Pointer())
