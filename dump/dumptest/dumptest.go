@@ -5,7 +5,6 @@ import (
 	"log"
 
 	lua "github.com/gladkikhartem/gopher-lua"
-	"github.com/kr/pretty"
 )
 
 func main() {
@@ -33,11 +32,26 @@ func main() {
 		}
 	}
 
-	if err := L.DoString(`print("hello")`); err != nil {
+	if err := L.DoString(`pVar = 123
+print("hello")
+print(pVar)`); err != nil {
 		panic(err)
 	}
 	d := L.Dump()
 	data, _ := json.Marshal(d)
-	log.Printf("DUMP: %# v", pretty.Formatter(d))
+	//log.Printf("DUMP: %# v", pretty.Formatter(d))
 	log.Printf("LEN: %# v", len(data))
+
+	l2, err := lua.LoadDump(d)
+	if err != nil {
+		panic(err)
+	}
+	d2 := l2.Dump()
+	data2, _ := json.Marshal(d2)
+	//log.Printf("DUMP: %# v", pretty.Formatter(d2))
+	log.Printf("LEN: %# v", len(data2))
+	if err := L.DoString(`print("hello")
+  print(pVar)`); err != nil {
+		panic(err)
+	}
 }

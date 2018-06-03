@@ -16,14 +16,11 @@ const (
 	TDbgLocalInfo
 )
 
-type Ptr struct {
-	Type Type
-	Ptr  string
-}
+type Ptr string
 
 type Value struct {
-	Type   int    // LValueType
-	Ptr    string // for state,table,and etc...
+	Type   int // LValueType
+	Ptr    Ptr // for state,table,and etc...
 	String string
 	Bool   bool
 	Number float64
@@ -104,17 +101,17 @@ type State struct {
 }
 
 type Data struct {
-	G               map[string]*Global //for consistency
-	States          map[string]*State
-	Tables          map[string]*Table
-	CallFrames      map[string]*CallFrame
-	CallFrameStacks map[string]*CallFrameStack
-	Registries      map[string]*Registry
-	Functions       map[string]*Function
-	GFunctions      map[string]*GFunction
-	FunctionProtos  map[string]*FunctionProto
-	DbgLocalInfos   map[string]*DbgLocalInfo
-	Upvalues        map[string]*Upvalue
+	G               map[Ptr]*Global //for consistency
+	States          map[Ptr]*State
+	Tables          map[Ptr]*Table
+	CallFrames      map[Ptr]*CallFrame
+	CallFrameStacks map[Ptr]*CallFrameStack
+	Registries      map[Ptr]*Registry
+	Functions       map[Ptr]*Function
+	GFunctions      map[Ptr]*GFunction
+	FunctionProtos  map[Ptr]*FunctionProto
+	DbgLocalInfos   map[Ptr]*DbgLocalInfo
+	Upvalues        map[Ptr]*Upvalue
 }
 
 type DbgLocalInfo struct {
