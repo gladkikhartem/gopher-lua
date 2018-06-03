@@ -19,154 +19,154 @@ const (
 type Ptr string
 
 type Value struct {
-	Type   int // LValueType
-	Ptr    Ptr // for state,table,and etc...
-	String string
-	Bool   bool
-	Number float64
+	Type   int     `json:",omitempty"` // LValueType
+	Ptr    Ptr     `json:",omitempty"` // for state,table,and etc...
+	String string  `json:",omitempty"`
+	Bool   bool    `json:",omitempty"`
+	Number float64 `json:",omitempty"`
 }
 
 type CallFrame struct {
-	Idx        int
-	Fn         Ptr //*LFunction
-	Parent     Ptr //*callFrame
-	Pc         int
-	Base       int
-	LocalBase  int
-	ReturnBase int
-	NArgs      int
-	NRet       int
-	TailCall   int
+	Idx        int `json:",omitempty"`
+	Fn         Ptr `json:",omitempty"` //*LFunction
+	Parent     Ptr `json:",omitempty"` //*callFrame
+	Pc         int `json:",omitempty"`
+	Base       int `json:",omitempty"`
+	LocalBase  int `json:",omitempty"`
+	ReturnBase int `json:",omitempty"`
+	NArgs      int `json:",omitempty"`
+	NRet       int `json:",omitempty"`
+	TailCall   int `json:",omitempty"`
 }
 
 type CallFrameStack struct {
-	Array []Ptr
-	Sp    int
+	Array []Ptr `json:",omitempty"`
+	Sp    int   `json:",omitempty"`
 }
 type Registry struct {
-	Array []Value
-	Top   int
+	Array []Value `json:",omitempty"`
+	Top   int     `json:",omitempty"`
 	//alloc *allocator
 }
 
 type Upvalue struct {
-	Next   Ptr //*Upvalue
-	Reg    Ptr //*registry
-	Index  int
-	Value  Value
-	Closed bool
+	Next   Ptr   `json:",omitempty"` //*Upvalue
+	Reg    Ptr   `json:",omitempty"` //*registry
+	Index  int   `json:",omitempty"`
+	Value  Value `json:",omitempty"`
+	Closed bool  `json:",omitempty"`
 }
 
 type Global struct {
-	MainThread    Ptr
-	CurrentThread Ptr
-	Registry      Ptr
-	Global        Ptr
+	MainThread    Ptr `json:",omitempty"`
+	CurrentThread Ptr `json:",omitempty"`
+	Registry      Ptr `json:",omitempty"`
+	Global        Ptr `json:",omitempty"`
 
-	BuiltinMts map[string]Value
+	BuiltinMts map[string]Value `json:",omitempty"`
 	//tempFiles  []*os.File  // TODO: save files???
-	Gccount int32
+	Gccount int32 `json:",omitempty"`
 }
 
 type Options struct {
-	CallStackSize       int
-	RegistrySize        int
-	SkipOpenLibs        bool
-	IncludeGoStackTrace bool
+	CallStackSize       int  `json:",omitempty"`
+	RegistrySize        int  `json:",omitempty"`
+	SkipOpenLibs        bool `json:",omitempty"`
+	IncludeGoStackTrace bool `json:",omitempty"`
 }
 
 type DbgCall struct {
-	Name string
-	Pc   int
+	Name string `json:",omitempty"`
+	Pc   int    `json:",omitempty"`
 }
 
 type State struct {
-	G      Ptr //*Global
-	Parent Ptr //*LState
-	Env    Ptr //*LTable
+	G      Ptr `json:",omitempty"` //*Global
+	Parent Ptr `json:",omitempty"` //*LState
+	Env    Ptr `json:",omitempty"` //*LTable
 	//Panic   //func(*LState)
-	Dead    bool
-	Options Options
+	Dead    bool    `json:",omitempty"`
+	Options Options `json:",omitempty"`
 
-	Stop         int32
-	Reg          Ptr
-	Stack        Ptr //*callFrameStack
-	CurrentFrame Ptr //*callFrame
-	Wrapped      bool
-	UVCache      Ptr //*Upvalue
-	HasErrorFunc bool
+	Stop         int32 `json:",omitempty"`
+	Reg          Ptr   `json:",omitempty"`
+	Stack        Ptr   `json:",omitempty"` //*callFrameStack
+	CurrentFrame Ptr   `json:",omitempty"` //*callFrame
+	Wrapped      bool  `json:",omitempty"`
+	UVCache      Ptr   `json:",omitempty"` //*Upvalue
+	HasErrorFunc bool  `json:",omitempty"`
 	//MainLoop     //func(*LState, *callFrame)
 	//Alloc        //*allocator
 	//Ctx          context.Context
 }
 
 type Data struct {
-	G               map[Ptr]*Global //for consistency
-	States          map[Ptr]*State
-	Tables          map[Ptr]*Table
-	CallFrames      map[Ptr]*CallFrame
-	CallFrameStacks map[Ptr]*CallFrameStack
-	Registries      map[Ptr]*Registry
-	Functions       map[Ptr]*Function
-	GFunctions      map[Ptr]*GFunction
-	FunctionProtos  map[Ptr]*FunctionProto
-	DbgLocalInfos   map[Ptr]*DbgLocalInfo
-	Upvalues        map[Ptr]*Upvalue
+	G               map[Ptr]*Global         `json:",omitempty"` //for consistency
+	States          map[Ptr]*State          `json:",omitempty"`
+	Tables          map[Ptr]*Table          `json:",omitempty"`
+	CallFrames      map[Ptr]*CallFrame      `json:",omitempty"`
+	CallFrameStacks map[Ptr]*CallFrameStack `json:",omitempty"`
+	Registries      map[Ptr]*Registry       `json:",omitempty"`
+	Functions       map[Ptr]*Function       `json:",omitempty"`
+	GFunctions      map[Ptr]*GFunction      `json:",omitempty"`
+	FunctionProtos  map[Ptr]*FunctionProto  `json:",omitempty"`
+	DbgLocalInfos   map[Ptr]*DbgLocalInfo   `json:",omitempty"`
+	Upvalues        map[Ptr]*Upvalue        `json:",omitempty"`
 }
 
 type DbgLocalInfo struct {
-	Name    string
-	StartPc int
-	EndPc   int
+	Name    string `json:",omitempty"`
+	StartPc int    `json:",omitempty"`
+	EndPc   int    `json:",omitempty"`
 }
 
 type FunctionProto struct {
-	SourceName         string
-	LineDefined        int
-	LastLineDefined    int
-	NumUpvalues        uint8
-	NumParameters      uint8
-	IsVarArg           uint8
-	NumUsedRegisters   uint8
-	Code               []uint32
-	Constants          []Value //[]LValue
-	FunctionPrototypes []Ptr   //[]*FunctionProto
+	SourceName         string   `json:",omitempty"`
+	LineDefined        int      `json:",omitempty"`
+	LastLineDefined    int      `json:",omitempty"`
+	NumUpvalues        uint8    `json:",omitempty"`
+	NumParameters      uint8    `json:",omitempty"`
+	IsVarArg           uint8    `json:",omitempty"`
+	NumUsedRegisters   uint8    `json:",omitempty"`
+	Code               []uint32 `json:",omitempty"`
+	Constants          []Value  `json:",omitempty"` //[]LValue
+	FunctionPrototypes []Ptr    `json:",omitempty"` //[]*FunctionProto
 
-	DbgSourcePositions []int
-	DbgLocals          []Ptr // TODO: []*DbgLocalInfo
-	DbgCalls           []DbgCall
-	DbgUpvalues        []string
+	DbgSourcePositions []int     `json:",omitempty"`
+	DbgLocals          []Ptr     `json:",omitempty"` // TODO: []*DbgLocalInfo
+	DbgCalls           []DbgCall `json:",omitempty"`
+	DbgUpvalues        []string  `json:",omitempty"`
 
-	StringConstants []string
+	StringConstants []string `json:",omitempty"`
 }
 type Function struct {
-	IsG       bool
-	Env       Ptr   //*LTable
-	Proto     Ptr   //*FunctionProto
-	GFunction Ptr   //LGFunction
-	Upvalues  []Ptr //[]*Upvalue
+	IsG       bool  `json:",omitempty"`
+	Env       Ptr   `json:",omitempty"` //*LTable
+	Proto     Ptr   `json:",omitempty"` //*FunctionProto
+	GFunction Ptr   `json:",omitempty"` //LGFunction
+	Upvalues  []Ptr `json:",omitempty"` //[]*Upvalue
 }
 
 type GFunction struct {
-	Name string
-	File string
-	Line int
+	Name string `json:",omitempty"`
+	File string `json:",omitempty"`
+	Line int    `json:",omitempty"`
 }
 
 type VV struct {
-	Key   Value
-	Value Value
+	Key   Value `json:",omitempty"`
+	Value Value `json:",omitempty"`
 }
 type VI struct {
-	Key   Value
-	Value int
+	Key   Value `json:",omitempty"`
+	Value int   `json:",omitempty"`
 }
 
 type Table struct {
-	Metatable Value
-	Array     []Value
-	Dict      []VV
-	Strdict   map[string]Value
-	Keys      []Value
-	K2i       []VI
+	Metatable Value            `json:",omitempty"`
+	Array     []Value          `json:",omitempty"`
+	Dict      []VV             `json:",omitempty"`
+	Strdict   map[string]Value `json:",omitempty"`
+	Keys      []Value          `json:",omitempty"`
+	K2i       []VI             `json:",omitempty"`
 }

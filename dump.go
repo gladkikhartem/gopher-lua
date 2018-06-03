@@ -10,6 +10,24 @@ import (
 	"github.com/gladkikhartem/gopher-lua/dump"
 )
 
+/* TODO LIST
+
+Function Proto constans disappear after 2nd dump
+Restore STDLIB GFunctions
+Registry value dissapeared !?
+{
+"Type": 2,
+"Number": 123
+}
+_G Table losing  globals information about STDLIB and other...
+table with _G key is lost
+
+
+TODO: save original pointer adresses to we could use them
+to track values in diff across the time
+
+
+*/
 func (s *LState) Dump() dump.Data {
 	d := dumper{
 		d: dump.Data{
