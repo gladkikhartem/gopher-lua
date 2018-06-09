@@ -1,6 +1,7 @@
 package lua
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"reflect"
@@ -152,14 +153,39 @@ func (d *dumpLoader) loadState(ptr dump.Ptr) *LState {
 	}
 	s.stop = ds.Stop
 	s.reg = d.loadRegistry(ds.Reg)
-	s.stack = d.loadCallFrameStack(ds.Stack)
 	s.currentFrame = d.loadCallFrame(ds.CurrentFrame)
+	s.stack = d.loadCallFrameStack(ds.Stack)
+	changedRef, ok := d.cfParents[s.currentFrame] // check if s.currentFrame points to callFrame Stack
+	if ok {
+		s.currentFrame = changedRef
+	} else if s.currentFrame != nil {
+		changedRef, ok = d.cfParents[s.currentFrame.Parent] // check if s.currentFrame.Parent points to callFrameStack
+		if ok {
+			s.currentFrame.Parent = changedRef
+		}
+	}
+	for _, v := range s.stack.array {
+		changedRef, ok := d.cfParents[v.Parent] // check if stack.callFrame.Parent points to the same callFrameStack
+		if ok {
+			v.Parent = changedRef
+		}
+	}
+
 	s.wrapped = ds.Wrapped
 	s.uvcache = d.loadUpvalue(ds.UVCache)
 	s.hasErrorFunc = ds.HasErrorFunc
 	s.Dead = ds.Dead
-	s.mainLoop = mainLoop
 	s.alloc = newAllocator(32)
+	if s.Options.IncludeGoStackTrace {
+		s.Panic = panicWithTraceback
+	} else {
+		s.Panic = panicWithoutTraceback
+	}
+	if d.ctx != nil {
+		s.SetContext(d.ctx)
+	} else {
+		s.mainLoop = mainLoop
+	}
 	return s
 }
 
@@ -339,7 +365,9 @@ func (d *dumpLoader) loadCallFrameStack(ptr dump.Ptr) *callFrameStack {
 	cfs.sp = dcfs.Sp
 	cfs.array = make([]callFrame, len(dcfs.Array))
 	for i, v := range dcfs.Array {
-		cfs.array[i] = *d.loadCallFrame(v) // TODO: modify pointer of call Frame parent
+		pv := d.loadCallFrame(v)
+		cfs.array[i] = *pv
+		d.cfParents[pv] = &cfs.array[i]
 	}
 
 	return cfs
@@ -709,6 +737,8 @@ type dumpLoader struct {
 	FunctionProtos  map[dump.Ptr]*FunctionProto
 	DbgLocalInfos   map[dump.Ptr]*DbgLocalInfo
 	Upvalues        map[dump.Ptr]*Upvalue
+	cfParents       map[*callFrame]*callFrame
+	ctx             context.Context
 }
 
 func (d *dumpLoader) init() {
@@ -724,6 +754,7 @@ func (d *dumpLoader) init() {
 	d.FunctionProtos = make(map[dump.Ptr]*FunctionProto)
 	d.DbgLocalInfos = make(map[dump.Ptr]*DbgLocalInfo)
 	d.Upvalues = make(map[dump.Ptr]*Upvalue)
+	d.cfParents = make(map[*callFrame]*callFrame)
 	for k := range d.Data.G {
 		d.G[k] = &Global{}
 	}
@@ -764,8 +795,8 @@ func (d *dumpLoader) load() error {
 	return fmt.Errorf("main thread not found")
 }
 
-func LoadDump(d dump.Data) (*LState, error) {
-	ld := dumpLoader{Data: d}
+func LoadDump(d dump.Data, ctx context.Context) (*LState, error) {
+	ld := dumpLoader{Data: d, ctx: ctx}
 	ld.init()
 	err := ld.load()
 	if err != nil {

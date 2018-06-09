@@ -24,9 +24,7 @@ func makeGzip(data []byte) []byte {
 
 func main() {
 	L := lua.NewState(lua.Options{
-		CallStackSize: 16,
-		RegistrySize:  128,
-		SkipOpenLibs:  true,
+		SkipOpenLibs: true,
 	})
 	defer L.Close()
 
@@ -57,7 +55,7 @@ print(pVar)`); err != nil {
 	//log.Printf("DUMP: %v", string(data))
 	log.Printf("LEN: %# v", len(makeGzip(data)))
 
-	l2, err := lua.LoadDump(d)
+	l2, err := lua.LoadDump(d, nil)
 	if err != nil {
 		panic(err)
 	}
