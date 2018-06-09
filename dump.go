@@ -44,16 +44,23 @@ func (s *LState) Dump() dump.Data {
 			DbgLocalInfos:   make(map[dump.Ptr]*dump.DbgLocalInfo),
 			Upvalues:        make(map[dump.Ptr]*dump.Upvalue),
 		},
+		prefixCount: make(map[string]int),
+		ptrMap:      make(map[string]string),
 	}
-	d.dumpState(s)
+	d.dumpState(s, "dumpState")
 	return d.d
 }
 
 type dumper struct {
-	d dump.Data
+	d           dump.Data
+	ptrMap      map[string]string
+	prefixCount map[string]int
 }
 
-func (d *dumper) dumpLValue(lv LValue) dump.Value {
+func (d *dumper) dumpLValue(lv LValue, name string) dump.Value {
+	if lv == nil {
+		return dump.Value{Type: int(LTNil)}
+	}
 	switch v := lv.(type) {
 	case LBool:
 		return dump.Value{Type: int(LTBool), Bool: bool(v)}
@@ -64,12 +71,15 @@ func (d *dumper) dumpLValue(lv LValue) dump.Value {
 	case *LNilType:
 		return dump.Value{Type: int(LTNil)}
 	case *LFunction:
-		return dump.Value{Type: int(LTFunction), Ptr: d.dumpFunction(v)}
+		return dump.Value{Type: int(LTFunction), Ptr: d.dumpFunction(v, name)}
 	case *LState:
-		return dump.Value{Type: int(LTThread), Ptr: d.dumpState(v)}
+		return dump.Value{Type: int(LTThread), Ptr: d.dumpState(v, name)}
 	case *LTable:
-		return dump.Value{Type: int(LTTable), Ptr: d.dumpTable(v)}
+		return dump.Value{Type: int(LTTable), Ptr: d.dumpTable(v, name)}
+	case nil:
+		return dump.Value{Type: int(LTNil)}
 	}
+	log.Printf("unknown type: %T", lv)
 	return dump.Value{Type: int(LTNil)}
 }
 
@@ -77,13 +87,13 @@ func (d *dumpLoader) loadLValue(vv dump.Value) LValue {
 	switch LValueType(vv.Type) {
 	case LTBool:
 		v := LBool(vv.Bool)
-		return &v
+		return v
 	case LTNumber:
 		v := LNumber(vv.Number)
-		return &v
+		return v
 	case LTString:
 		v := LString(vv.String)
-		return &v
+		return v
 	case LTNil:
 		v := LNilType{}
 		return &v
@@ -99,20 +109,20 @@ func (d *dumpLoader) loadLValue(vv dump.Value) LValue {
 	return &v
 }
 
-func (d *dumper) dumpState(s *LState) (ptr dump.Ptr) {
+func (d *dumper) dumpState(s *LState, name string) (ptr dump.Ptr) {
 	if s == nil {
 		return
 	}
-	ptr = getPtr(s)
+	ptr = d.getPtr(s, name)
 	_, ok := d.d.States[ptr]
 	if ok {
 		return
 	}
 	ds := dump.State{}
 	d.d.States[ptr] = &ds // avoid infinite recursion
-	ds.G = d.dumpGlobal(s.G)
-	ds.Parent = d.dumpState(s.Parent)
-	ds.Env = d.dumpTable(s.Env)
+	ds.Parent = d.dumpState(s.Parent, ".parent")
+	ds.G = d.dumpGlobal(s.G, ".global")
+	ds.Env = d.dumpTable(s.Env, ".env")
 	ds.Options = dump.Options{
 		CallStackSize:       s.Options.CallStackSize,
 		RegistrySize:        s.Options.RegistrySize,
@@ -120,11 +130,11 @@ func (d *dumper) dumpState(s *LState) (ptr dump.Ptr) {
 		IncludeGoStackTrace: s.Options.IncludeGoStackTrace,
 	}
 	ds.Stop = s.stop
-	ds.Reg = d.dumpRegistry(s.reg)
-	ds.Stack = d.dumpCallFrameStack(s.stack)
-	ds.CurrentFrame = d.dumpCallFrame(s.currentFrame)
+	ds.UVCache = d.dumpUpvalue(s.uvcache, ".uvCache")
+	ds.Reg = d.dumpRegistry(s.reg, ".reg")
+	ds.Stack = d.dumpCallFrameStack(s.stack, ".stack")
+	ds.CurrentFrame = d.dumpCallFrame(s.currentFrame, ".curFrame")
 	ds.Wrapped = s.wrapped
-	ds.UVCache = d.dumpUpvalue(s.uvcache)
 	ds.HasErrorFunc = s.hasErrorFunc
 	ds.Dead = s.Dead
 	return
@@ -189,25 +199,25 @@ func (d *dumpLoader) loadState(ptr dump.Ptr) *LState {
 	return s
 }
 
-func (d *dumper) dumpGlobal(g *Global) (ptr dump.Ptr) {
+func (d *dumper) dumpGlobal(g *Global, name string) (ptr dump.Ptr) {
 	if g == nil {
 		return
 	}
-	ptr = getPtr(g)
+	ptr = d.getPtr(g, name)
 	_, ok := d.d.G[ptr]
 	if ok {
 		return
 	}
 	dg := dump.Global{}
 	d.d.G[ptr] = &dg // avoid infinite recursion
-	dg.MainThread = d.dumpState(g.MainThread)
-	dg.CurrentThread = d.dumpState(g.CurrentThread)
-	dg.Registry = d.dumpTable(g.Registry)
-	dg.Global = d.dumpTable(g.Global)
+	dg.MainThread = d.dumpState(g.MainThread, "mainThread")
+	dg.CurrentThread = d.dumpState(g.CurrentThread, "curThread")
+	dg.Registry = d.dumpTable(g.Registry, "reg")
+	dg.Global = d.dumpTable(g.Global, "global")
 	dg.Gccount = g.gccount
 	dg.BuiltinMts = map[string]dump.Value{}
 	for k, v := range g.builtinMts {
-		dg.BuiltinMts[fmt.Sprint(k)] = d.dumpLValue(v)
+		dg.BuiltinMts[fmt.Sprint(k)] = d.dumpLValue(v, fmt.Sprint("builtin-", k))
 	}
 	return
 }
@@ -238,11 +248,11 @@ func (d *dumpLoader) loadGlobal(ptr dump.Ptr) *Global {
 	return g
 }
 
-func (d *dumper) dumpCallFrame(cf *callFrame) (ptr dump.Ptr) {
+func (d *dumper) dumpCallFrame(cf *callFrame, name string) (ptr dump.Ptr) {
 	if cf == nil {
 		return
 	}
-	ptr = getPtr(cf)
+	ptr = d.getPtr(cf, name)
 	_, ok := d.d.CallFrames[ptr]
 	if ok {
 		return
@@ -251,8 +261,8 @@ func (d *dumper) dumpCallFrame(cf *callFrame) (ptr dump.Ptr) {
 	d.d.CallFrames[ptr] = &dcf // avoid infinite recursion
 
 	dcf.Idx = cf.Idx
-	dcf.Fn = d.dumpFunction(cf.Fn)
-	dcf.Parent = d.dumpCallFrame(cf.Parent)
+	dcf.Fn = d.dumpFunction(cf.Fn, "cf-func")
+	dcf.Parent = d.dumpCallFrame(cf.Parent, "cf-parent")
 	dcf.Pc = cf.Pc
 	dcf.Base = cf.Base
 	dcf.LocalBase = cf.LocalBase
@@ -289,11 +299,11 @@ func (d *dumpLoader) loadCallFrame(ptr dump.Ptr) *callFrame {
 	return cf
 }
 
-func (d *dumper) dumpRegistry(r *registry) (ptr dump.Ptr) {
+func (d *dumper) dumpRegistry(r *registry, name string) (ptr dump.Ptr) {
 	if r == nil {
 		return
 	}
-	ptr = getPtr(r)
+	ptr = d.getPtr(r, name)
 	_, ok := d.d.Registries[ptr]
 	if ok {
 		return
@@ -304,7 +314,7 @@ func (d *dumper) dumpRegistry(r *registry) (ptr dump.Ptr) {
 	dr.Top = r.top
 	dr.Array = make([]dump.Value, len(r.array))
 	for i, v := range r.array {
-		dr.Array[i] = d.dumpLValue(v)
+		dr.Array[i] = d.dumpLValue(v, fmt.Sprintf("%v.[%v]", name, i))
 	}
 	return
 }
@@ -330,11 +340,11 @@ func (d *dumpLoader) loadRegistry(ptr dump.Ptr) *registry {
 	return r
 }
 
-func (d *dumper) dumpCallFrameStack(cfs *callFrameStack) (ptr dump.Ptr) {
+func (d *dumper) dumpCallFrameStack(cfs *callFrameStack, name string) (ptr dump.Ptr) {
 	if cfs == nil {
 		return
 	}
-	ptr = getPtr(cfs)
+	ptr = d.getPtr(cfs, name)
 	_, ok := d.d.CallFrameStacks[ptr]
 	if ok {
 		return
@@ -345,7 +355,7 @@ func (d *dumper) dumpCallFrameStack(cfs *callFrameStack) (ptr dump.Ptr) {
 	dcfs.Sp = cfs.sp
 	dcfs.Array = make([]dump.Ptr, len(cfs.array))
 	for i, v := range cfs.array {
-		dcfs.Array[i] = d.dumpCallFrame(&v)
+		dcfs.Array[i] = d.dumpCallFrame(&v, fmt.Sprintf("%v.arr.[%v]", ptr, i))
 	}
 	return
 }
@@ -373,11 +383,11 @@ func (d *dumpLoader) loadCallFrameStack(ptr dump.Ptr) *callFrameStack {
 	return cfs
 }
 
-func (d *dumper) dumpUpvalue(uv *Upvalue) (ptr dump.Ptr) {
+func (d *dumper) dumpUpvalue(uv *Upvalue, name string) (ptr dump.Ptr) {
 	if uv == nil {
 		return
 	}
-	ptr = getPtr(uv)
+	ptr = d.getPtr(uv, name)
 	_, ok := d.d.Upvalues[ptr]
 	if ok {
 		return
@@ -385,10 +395,10 @@ func (d *dumper) dumpUpvalue(uv *Upvalue) (ptr dump.Ptr) {
 	duv := dump.Upvalue{}
 	d.d.Upvalues[ptr] = &duv // avoid infinite recursion
 
-	duv.Next = d.dumpUpvalue(uv.next)
-	duv.Reg = d.dumpRegistry(uv.reg)
+	duv.Next = d.dumpUpvalue(uv.next, string(ptr)+".next")
+	duv.Reg = d.dumpRegistry(uv.reg, string(ptr)+".reg")
 	duv.Index = uv.index
-	duv.Value = d.dumpLValue(uv.value)
+	duv.Value = d.dumpLValue(uv.value, string(ptr)+".value")
 	duv.Closed = uv.closed
 	return
 }
@@ -414,11 +424,11 @@ func (d *dumpLoader) loadUpvalue(ptr dump.Ptr) *Upvalue {
 	return uv
 }
 
-func (d *dumper) dumpFunction(f *LFunction) (ptr dump.Ptr) {
+func (d *dumper) dumpFunction(f *LFunction, name string) (ptr dump.Ptr) {
 	if f == nil {
 		return
 	}
-	ptr = getPtr(f)
+	ptr = d.getPtr(f, name)
 	_, ok := d.d.Upvalues[ptr]
 	if ok {
 		return
@@ -427,12 +437,12 @@ func (d *dumper) dumpFunction(f *LFunction) (ptr dump.Ptr) {
 	d.d.Functions[ptr] = &df // avoid infinite recursion
 
 	df.IsG = f.IsG
-	df.Env = d.dumpTable(f.Env)
-	df.Proto = d.dumpFunctionProto(f.Proto)
-	df.GFunction = d.dumpGFunction(f.GFunction)
+	df.Env = d.dumpTable(f.Env, string(ptr)+".env")
+	df.Proto = d.dumpFunctionProto(f.Proto, string(ptr)+".proto")
+	df.GFunction = d.dumpGFunction(f.GFunction, string(ptr)+".gf")
 	df.Upvalues = make([]dump.Ptr, len(f.Upvalues))
 	for i, v := range f.Upvalues {
-		df.Upvalues[i] = d.dumpUpvalue(v)
+		df.Upvalues[i] = d.dumpUpvalue(v, fmt.Sprintf("%v.upv.[%v]", ptr, i))
 	}
 	return
 }
@@ -460,11 +470,11 @@ func (d *dumpLoader) loadFunction(ptr dump.Ptr) *LFunction {
 	return f
 }
 
-func (d *dumper) dumpFunctionProto(fp *FunctionProto) (ptr dump.Ptr) {
+func (d *dumper) dumpFunctionProto(fp *FunctionProto, name string) (ptr dump.Ptr) {
 	if fp == nil {
 		return
 	}
-	ptr = getPtr(fp)
+	ptr = d.getPtr(fp, name)
 	_, ok := d.d.FunctionProtos[ptr]
 	if ok {
 		return
@@ -486,11 +496,12 @@ func (d *dumper) dumpFunctionProto(fp *FunctionProto) (ptr dump.Ptr) {
 
 	dfp.Constants = make([]dump.Value, len(fp.Constants))
 	for i, v := range fp.Constants {
-		dfp.Constants[i] = d.dumpLValue(v)
+		log.Printf("dump const %v %v", i, v)
+		dfp.Constants[i] = d.dumpLValue(v, fmt.Sprintf("%v.const.[%v]", ptr, i))
 	}
 	dfp.FunctionPrototypes = make([]dump.Ptr, len(fp.FunctionPrototypes))
 	for i, v := range fp.FunctionPrototypes {
-		dfp.FunctionPrototypes[i] = d.dumpFunctionProto(v)
+		dfp.FunctionPrototypes[i] = d.dumpFunctionProto(v, fmt.Sprintf("%v.protos.[%v]", ptr, i))
 	}
 	dfp.DbgCalls = make([]dump.DbgCall, len(fp.DbgCalls))
 	for i, v := range fp.DbgCalls {
@@ -500,7 +511,7 @@ func (d *dumper) dumpFunctionProto(fp *FunctionProto) (ptr dump.Ptr) {
 	}
 	dfp.DbgLocals = make([]dump.Ptr, len(fp.DbgLocals))
 	for i, v := range fp.DbgLocals {
-		dfp.DbgLocals[i] = d.dumpDbgLocalInfo(v)
+		dfp.DbgLocals[i] = d.dumpDbgLocalInfo(v, fmt.Sprintf("%v.dbglocals.[%v]", ptr, i))
 	}
 	return
 }
@@ -531,6 +542,7 @@ func (d *dumpLoader) loadFunctionProto(ptr dump.Ptr) *FunctionProto {
 
 	fp.Constants = make([]LValue, len(dfp.Constants))
 	for i, v := range dfp.Constants {
+		log.Printf("load const %v %v", i, v)
 		fp.Constants[i] = d.loadLValue(v)
 	}
 	fp.FunctionPrototypes = make([]*FunctionProto, len(dfp.FunctionPrototypes))
@@ -551,11 +563,11 @@ func (d *dumpLoader) loadFunctionProto(ptr dump.Ptr) *FunctionProto {
 	return fp
 }
 
-func (d *dumper) dumpDbgLocalInfo(li *DbgLocalInfo) (ptr dump.Ptr) {
+func (d *dumper) dumpDbgLocalInfo(li *DbgLocalInfo, name string) (ptr dump.Ptr) {
 	if li == nil {
 		return
 	}
-	ptr = getPtr(li)
+	ptr = d.getPtr(li, name)
 	_, ok := d.d.DbgLocalInfos[ptr]
 	if ok {
 		return
@@ -588,11 +600,11 @@ func (d *dumpLoader) loadDbgLocalInfo(ptr dump.Ptr) *DbgLocalInfo {
 	return li
 }
 
-func (d *dumper) dumpTable(t *LTable) (ptr dump.Ptr) {
+func (d *dumper) dumpTable(t *LTable, name string) (ptr dump.Ptr) {
 	if t == nil {
 		return
 	}
-	ptr = getPtr(t)
+	ptr = d.getPtr(t, name)
 	_, ok := d.d.Tables[ptr]
 	if ok {
 		return
@@ -600,28 +612,30 @@ func (d *dumper) dumpTable(t *LTable) (ptr dump.Ptr) {
 	dt := dump.Table{}
 	d.d.Tables[ptr] = &dt // avoid infinite recursion
 
-	dt.Metatable = d.dumpLValue(t.Metatable)
+	dt.Metatable = d.dumpLValue(t.Metatable, string(ptr)+".meta")
 	dt.Array = make([]dump.Value, len(t.array))
 	for i, v := range t.array {
-		dt.Array[i] = d.dumpLValue(v)
+		dt.Array[i] = d.dumpLValue(v, fmt.Sprintf("%v.[%v]", ptr, i))
 	}
 	dt.Dict = []dump.VV{}
 	for k, v := range t.dict {
 		dt.Dict = append(dt.Dict, dump.VV{
-			Key:   d.dumpLValue(k),
-			Value: d.dumpLValue(v)})
+			Key:   d.dumpLValue(k, fmt.Sprintf("%v.[%v].key", ptr, len(dt.Dict))),
+			Value: d.dumpLValue(v, fmt.Sprintf("%v.[%v].value", ptr, len(dt.Dict)))})
 	}
 	dt.Strdict = map[string]dump.Value{}
 	for k, v := range t.strdict {
-		dt.Strdict[k] = d.dumpLValue(v)
+		dt.Strdict[k] = d.dumpLValue(v, fmt.Sprintf("%v.%v", ptr, k))
 	}
 	dt.Keys = make([]dump.Value, len(t.keys))
 	for i, v := range t.keys {
-		dt.Keys[i] = d.dumpLValue(v)
+		dt.Keys[i] = d.dumpLValue(v, fmt.Sprintf("%v.keys.[%v]", ptr, i))
 	}
 	dt.K2i = []dump.VI{}
 	for i, v := range t.k2i {
-		dt.K2i = append(dt.K2i, dump.VI{Key: d.dumpLValue(i), Value: v})
+		dt.K2i = append(dt.K2i, dump.VI{
+			Key:   d.dumpLValue(i, fmt.Sprintf("%v.arr.[%v]", ptr, i)),
+			Value: v})
 	}
 	return
 }
@@ -670,11 +684,11 @@ func (d *dumpLoader) loadTable(ptr dump.Ptr) *LTable {
 	return t
 }
 
-func (d *dumper) dumpGFunction(gf LGFunction) (ptr dump.Ptr) {
+func (d *dumper) dumpGFunction(gf LGFunction, name string) (ptr dump.Ptr) {
 	if gf == nil {
 		return
 	}
-	ptr = getPtr(gf)
+	ptr = d.getPtr(gf, name)
 	_, ok := d.d.GFunctions[ptr]
 	if ok {
 		return
@@ -714,12 +728,25 @@ func (d *dumpLoader) loadGFunction(ptr dump.Ptr) LGFunction {
 	return gf
 }
 
-func getPtr(ptr interface{}) dump.Ptr {
+func (d dumper) getPtr(ptr interface{}, prefix string) dump.Ptr {
 	v := reflect.ValueOf(ptr)
 	if v.IsNil() {
 		return "nil"
 	}
-	return dump.Ptr(fmt.Sprint(v.Type(), "-", v.Pointer()))
+	strPtr := fmt.Sprint(v.Type(), "-", v.Pointer())
+	alias := d.ptrMap[strPtr]
+	if alias != "" {
+		return dump.Ptr(alias)
+	}
+
+	count := d.prefixCount[prefix]
+	d.prefixCount[prefix]++
+	alias = fmt.Sprintf("%v-%v", prefix, count)
+	if count == 0 && prefix != "" {
+		alias = fmt.Sprintf("%v", prefix)
+	}
+	d.ptrMap[strPtr] = alias
+	return dump.Ptr(alias)
 }
 
 type dumpLoader struct {

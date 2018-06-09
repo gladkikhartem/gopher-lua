@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"log"
 
 	lua "github.com/gladkikhartem/gopher-lua"
@@ -24,7 +25,9 @@ func makeGzip(data []byte) []byte {
 
 func main() {
 	L := lua.NewState(lua.Options{
-		SkipOpenLibs: true,
+		RegistrySize:  128,
+		CallStackSize: 64,
+		SkipOpenLibs:  true,
 	})
 	defer L.Close()
 
@@ -52,8 +55,8 @@ print(pVar)`); err != nil {
 	}
 	d := L.Dump()
 	data, _ := json.MarshalIndent(d, " ", " ")
-	//log.Printf("DUMP: %v", string(data))
-	log.Printf("LEN: %# v", len(makeGzip(data)))
+	//log.Printf("LEN: %# v", len(data))
+	//log.Printf("GZIP: %# v", len(makeGzip(data)))
 
 	l2, err := lua.LoadDump(d, nil)
 	if err != nil {
@@ -61,8 +64,12 @@ print(pVar)`); err != nil {
 	}
 	d2 := l2.Dump()
 	data2, _ := json.MarshalIndent(d2, " ", " ")
-	//log.Printf("DUMP: %v", string(data2))
-	log.Printf("LEN: %# v", len(makeGzip(data2)))
+	fmt.Printf("DUMP: %v\n", string(data))
+	fmt.Printf("DUMP2: %v\n", string(data2))
+	fmt.Printf("LEN: %# v\n", len(data))
+	fmt.Printf("GZIP: %# v\n", len(makeGzip(data)))
+	fmt.Printf("LEN2: %# v\n", len(data2))
+	fmt.Printf("GZIP2: %# v\n", len(makeGzip(data2)))
 	if err := l2.DoString(`print("hello2")
   print(pVar)`); err != nil {
 		panic(err)
