@@ -185,7 +185,7 @@ func (d *dumpLoader) loadState(ptr dump.Ptr) *LState {
 	s.uvcache = d.loadUpvalue(ds.UVCache)
 	s.hasErrorFunc = ds.HasErrorFunc
 	s.Dead = ds.Dead
-	s.alloc = newAllocator(32)
+	s.alloc = d.alloc
 	if s.Options.IncludeGoStackTrace {
 		s.Panic = panicWithTraceback
 	} else {
@@ -331,6 +331,7 @@ func (d *dumpLoader) loadRegistry(ptr dump.Ptr) *registry {
 	}
 	d.Loaded[id] = true
 
+	r.alloc = d.alloc
 	r.top = dr.Top
 	r.array = make([]LValue, len(dr.Array))
 	for i, v := range dr.Array {
@@ -496,7 +497,6 @@ func (d *dumper) dumpFunctionProto(fp *FunctionProto, name string) (ptr dump.Ptr
 
 	dfp.Constants = make([]dump.Value, len(fp.Constants))
 	for i, v := range fp.Constants {
-		log.Printf("dump const %v %v", i, v)
 		dfp.Constants[i] = d.dumpLValue(v, fmt.Sprintf("%v.const.[%v]", ptr, i))
 	}
 	dfp.FunctionPrototypes = make([]dump.Ptr, len(fp.FunctionPrototypes))
@@ -542,7 +542,6 @@ func (d *dumpLoader) loadFunctionProto(ptr dump.Ptr) *FunctionProto {
 
 	fp.Constants = make([]LValue, len(dfp.Constants))
 	for i, v := range dfp.Constants {
-		log.Printf("load const %v %v", i, v)
 		fp.Constants[i] = d.loadLValue(v)
 	}
 	fp.FunctionPrototypes = make([]*FunctionProto, len(dfp.FunctionPrototypes))
@@ -766,9 +765,11 @@ type dumpLoader struct {
 	Upvalues        map[dump.Ptr]*Upvalue
 	cfParents       map[*callFrame]*callFrame
 	ctx             context.Context
+	alloc           *allocator
 }
 
 func (d *dumpLoader) init() {
+	d.alloc = newAllocator(32)
 	d.Loaded = make(map[string]bool)
 	d.G = make(map[dump.Ptr]*Global) //for consistency
 	d.States = make(map[dump.Ptr]*LState)
