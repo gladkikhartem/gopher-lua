@@ -3,14 +3,12 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
-	"encoding/gob"
-	"encoding/json"
 	"fmt"
 	"log"
-	"time"
 
 	lua "github.com/gladkikhartem/gopher-lua"
-	"github.com/gladkikhartem/gopher-lua/dump"
+	"github.com/sergi/go-diff/diffmatchpatch"
+	ordjson "github.com/virtuald/go-ordered-json"
 )
 
 func makeGzip(data []byte) []byte {
@@ -35,56 +33,37 @@ func main() {
 	})
 	defer L.Close()
 
-	for _, pair := range []struct {
-		n string
-		f lua.LGFunction
-	}{
-		//  {lua.LoadLibName, lua.OpenPackage}, // Must be first
-		//  {lua.BaseLibName, lua.OpenBase},
-		//  {lua.TabLibName, lua.OpenTable},
-	} {
-		if err := L.CallByParam(lua.P{
-			Fn:      L.NewFunction(pair.f),
-			NRet:    0,
-			Protect: true,
-		}, lua.LString(pair.n)); err != nil {
-			panic(err)
-		}
-	}
-
-	if err := L.DoString(`pVar = 123`); err != nil {
+	if err := L.DoString(`pVar = 123
+  pVar = 123
+  pVar = 123
+  pVar = 123
+  pVar2 = 124
+  pVar3 = 125
+  pVar = 155`); err != nil {
 		panic(err)
 	}
 	d := L.Dump()
-	data, _ := json.MarshalIndent(d, " ", " ")
-	//log.Printf("LEN: %# v", len(data))
-	//log.Printf("GZIP: %# v", len(makeGzip(data)))
-	var b bytes.Buffer
-	encoder := gob.NewEncoder(&b)
-	encoder.Encode(d)
-	fmt.Printf("DUMP: %v\n", string(b.String()))
-	fmt.Printf("BLEN: %v\n", b.Len())
+	data, _ := ordjson.MarshalIndent(d, " ", " ")
 
-	return
 	l2, err := lua.LoadDump(d, nil)
 	if err != nil {
 		panic(err)
 	}
-	if err := l2.DoString(`print("hello2")
-print(pVar)
+
+	if err := l2.DoString(`
+  pVar = 123
+  pVar = 123
+  pVar2 = 124
+  pVar3 = 125
 `); err != nil {
 		panic(err)
 	}
-	var d2 dump.Data
-	t := time.Now()
-	for i := 0; i < 100; i++ {
-		d2 = l2.Dump()
-	}
-	log.Printf("average dump: %v", float64(time.Since(t).Nanoseconds()/1000000)/100)
-	data2, _ := json.MarshalIndent(d2, " ", " ")
-	//fmt.Printf("DUMP2: %v\n", string(data2))
-	fmt.Printf("LEN: %# v\n", len(data))
-	fmt.Printf("GZIP: %# v\n", len(makeGzip(data)))
-	fmt.Printf("LEN2: %# v\n", len(data2))
-	fmt.Printf("GZIP2: %# v\n", len(makeGzip(data2)))
+	d2 := l2.Dump()
+	data2, _ := ordjson.MarshalIndent(d2, " ", " ")
+
+	dmp := diffmatchpatch.New()
+	diffs := dmp.DiffMain(string(data), string(data2), false)
+	fmt.Println(dmp.DiffPrettyText(diffs))
+	fmt.Println(len(makeGzip(data2)))
+
 }

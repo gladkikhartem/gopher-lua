@@ -32,7 +32,6 @@ to track values in diff across the time
 func (s *LState) Dump() dump.Data {
 	d := dumper{
 		d: dump.Data{
-			G:               make(map[dump.Ptr]*dump.Global), //for consistency
 			States:          make(map[dump.Ptr]*dump.State),
 			Tables:          make(map[dump.Ptr]*dump.Table),
 			CallFrames:      make(map[dump.Ptr]*dump.CallFrame),
@@ -120,8 +119,8 @@ func (d *dumper) dumpState(s *LState, name string) (ptr dump.Ptr) {
 	}
 	ds := dump.State{}
 	d.d.States[ptr] = &ds // avoid infinite recursion
+	d.dumpGlobal(s.G)
 	ds.Parent = d.dumpState(s.Parent, ".parent")
-	ds.G = d.dumpGlobal(s.G, ".global")
 	ds.Env = d.dumpTable(s.Env, ".env")
 	ds.Options = dump.Options{
 		CallStackSize:       s.Options.CallStackSize,
@@ -199,53 +198,38 @@ func (d *dumpLoader) loadState(ptr dump.Ptr) *LState {
 	return s
 }
 
-func (d *dumper) dumpGlobal(g *Global, name string) (ptr dump.Ptr) {
-	if g == nil {
+func (d *dumper) dumpGlobal(g *Global) {
+	if d.d.G != nil {
 		return
 	}
-	ptr = d.getPtr(g, name)
-	_, ok := d.d.G[ptr]
-	if ok {
-		return
-	}
-	dg := dump.Global{}
-	d.d.G[ptr] = &dg // avoid infinite recursion
-	dg.MainThread = d.dumpState(g.MainThread, "mainThread")
-	dg.CurrentThread = d.dumpState(g.CurrentThread, "curThread")
-	dg.Registry = d.dumpTable(g.Registry, "reg")
-	dg.Global = d.dumpTable(g.Global, "global")
-	dg.Gccount = g.gccount
-	dg.BuiltinMts = map[string]dump.Value{}
+	d.d.G = &dump.Global{}
+	d.d.G.Global = d.dumpTable(g.Global, "global")
+	d.d.G.MainThread = d.dumpState(g.MainThread, "mainThread")
+	d.d.G.CurrentThread = d.dumpState(g.CurrentThread, "curThread")
+	d.d.G.Registry = d.dumpTable(g.Registry, "reg")
+	d.d.G.Gccount = g.gccount
+	d.d.G.BuiltinMts = map[string]dump.Value{}
 	for k, v := range g.builtinMts {
-		dg.BuiltinMts[fmt.Sprint(k)] = d.dumpLValue(v, fmt.Sprint("builtin-", k))
+		d.d.G.BuiltinMts[fmt.Sprint(k)] = d.dumpLValue(v, fmt.Sprint("builtin-", k))
 	}
 	return
 }
 
 func (d *dumpLoader) loadGlobal(ptr dump.Ptr) *Global {
-	if ptr == "" {
-		return nil
+	if d.G.MainThread != nil {
+		return d.G
 	}
-	g := d.G[ptr]
-	dg := d.Data.G[ptr]
-	id := fmt.Sprint("global-", ptr)
-	if d.Loaded[id] {
-		return g
-	}
-	d.Loaded[id] = true
-
-	g.MainThread = d.loadState(dg.MainThread)
-	g.CurrentThread = d.loadState(dg.CurrentThread)
-	g.Registry = d.loadTable(dg.Registry)
-	g.Global = d.loadTable(dg.Global)
-	g.gccount = dg.Gccount
-	g.builtinMts = map[int]LValue{}
-	for k, v := range dg.BuiltinMts {
+	d.G.MainThread = d.loadState(d.Data.G.MainThread)
+	d.G.CurrentThread = d.loadState(d.Data.G.CurrentThread)
+	d.G.Registry = d.loadTable(d.Data.G.Registry)
+	d.G.Global = d.loadTable(d.Data.G.Global)
+	d.G.gccount = d.Data.G.Gccount
+	d.G.builtinMts = map[int]LValue{}
+	for k, v := range d.Data.G.BuiltinMts {
 		intk, _ := strconv.Atoi(k)
-		g.builtinMts[intk] = d.loadLValue(v)
+		d.G.builtinMts[intk] = d.loadLValue(v)
 	}
-
-	return g
+	return d.G
 }
 
 func (d *dumper) dumpCallFrame(cf *callFrame, name string) (ptr dump.Ptr) {
@@ -316,6 +300,16 @@ func (d *dumper) dumpRegistry(r *registry, name string) (ptr dump.Ptr) {
 	for i, v := range r.array {
 		dr.Array[i] = d.dumpLValue(v, fmt.Sprintf("%v.[%v]", name, i))
 	}
+	// skip empty values to save dump space
+	for i := len(dr.Array) - 1; i >= 0; i-- {
+		if r.array[i] == nil {
+			continue
+		}
+		log.Print(reflect.TypeOf(r.array[i]))
+		dr.Array = dr.Array[:i+1]
+		break
+	}
+	dr.Len = len(r.array)
 	return
 }
 
@@ -333,7 +327,7 @@ func (d *dumpLoader) loadRegistry(ptr dump.Ptr) *registry {
 
 	r.alloc = d.alloc
 	r.top = dr.Top
-	r.array = make([]LValue, len(dr.Array))
+	r.array = make([]LValue, dr.Len)
 	for i, v := range dr.Array {
 		r.array[i] = d.loadLValue(v)
 	}
@@ -358,6 +352,15 @@ func (d *dumper) dumpCallFrameStack(cfs *callFrameStack, name string) (ptr dump.
 	for i, v := range cfs.array {
 		dcfs.Array[i] = d.dumpCallFrame(&v, fmt.Sprintf("%v.arr.[%v]", ptr, i))
 	}
+	// skip empty values to save dump space
+	for i := len(dcfs.Array) - 1; i >= 0; i-- {
+		if cfs.array[i].Fn == nil {
+			continue
+		}
+		dcfs.Array = dcfs.Array[:i+1]
+		break
+	}
+	dcfs.Len = len(cfs.array)
 	return
 }
 
@@ -374,7 +377,7 @@ func (d *dumpLoader) loadCallFrameStack(ptr dump.Ptr) *callFrameStack {
 	d.Loaded[id] = true
 
 	cfs.sp = dcfs.Sp
-	cfs.array = make([]callFrame, len(dcfs.Array))
+	cfs.array = make([]callFrame, dcfs.Len)
 	for i, v := range dcfs.Array {
 		pv := d.loadCallFrame(v)
 		cfs.array[i] = *pv
@@ -626,16 +629,6 @@ func (d *dumper) dumpTable(t *LTable, name string) (ptr dump.Ptr) {
 	for k, v := range t.strdict {
 		dt.Strdict[k] = d.dumpLValue(v, fmt.Sprintf("%v.%v", ptr, k))
 	}
-	dt.Keys = make([]dump.Value, len(t.keys))
-	for i, v := range t.keys {
-		dt.Keys[i] = d.dumpLValue(v, fmt.Sprintf("%v.keys.[%v]", ptr, i))
-	}
-	dt.K2i = []dump.VI{}
-	for i, v := range t.k2i {
-		dt.K2i = append(dt.K2i, dump.VI{
-			Key:   d.dumpLValue(i, fmt.Sprintf("%v.arr.[%v]", ptr, i)),
-			Value: v})
-	}
 	return
 }
 
@@ -659,26 +652,22 @@ func (d *dumpLoader) loadTable(ptr dump.Ptr) *LTable {
 	for i, v := range dt.Array {
 		t.array[i] = d.loadLValue(v)
 	}
+	t.k2i = map[LValue]int{}
 	t.dict = map[LValue]LValue{}
+	t.keys = []LValue{}
 	for _, pair := range dt.Dict {
 		k := d.loadLValue(pair.Key)
 		v := d.loadLValue(pair.Value)
 		t.dict[k] = v
+		t.k2i[k] = len(t.keys)
+		t.keys = append(t.keys, k)
 	}
-
-	//k2i     map[LValue]int
 	t.strdict = map[string]LValue{}
 	for k, v := range dt.Strdict {
 		t.strdict[k] = d.loadLValue(v)
-	}
-	t.keys = make([]LValue, len(dt.Keys))
-	for i, v := range dt.Keys {
-		t.keys[i] = d.loadLValue(v)
-	}
-	t.k2i = map[LValue]int{}
-	for _, pair := range dt.K2i {
-		k := d.loadLValue(pair.Key)
-		t.k2i[k] = pair.Value
+		lkey := LString(k)
+		t.k2i[lkey] = len(t.keys)
+		t.keys = append(t.keys, lkey)
 	}
 	return t
 }
@@ -751,8 +740,8 @@ func (d dumper) getPtr(ptr interface{}, prefix string) dump.Ptr {
 type dumpLoader struct {
 	Errors          []error
 	Data            dump.Data
-	Loaded          map[string]bool      // ids of objects loaded
-	G               map[dump.Ptr]*Global //for consistency
+	Loaded          map[string]bool // ids of objects loaded
+	G               *Global         //for consistency
 	States          map[dump.Ptr]*LState
 	Tables          map[dump.Ptr]*LTable
 	CallFrames      map[dump.Ptr]*callFrame
@@ -771,7 +760,6 @@ type dumpLoader struct {
 func (d *dumpLoader) init() {
 	d.alloc = newAllocator(32)
 	d.Loaded = make(map[string]bool)
-	d.G = make(map[dump.Ptr]*Global) //for consistency
 	d.States = make(map[dump.Ptr]*LState)
 	d.Tables = make(map[dump.Ptr]*LTable)
 	d.CallFrames = make(map[dump.Ptr]*callFrame)
@@ -783,9 +771,7 @@ func (d *dumpLoader) init() {
 	d.DbgLocalInfos = make(map[dump.Ptr]*DbgLocalInfo)
 	d.Upvalues = make(map[dump.Ptr]*Upvalue)
 	d.cfParents = make(map[*callFrame]*callFrame)
-	for k := range d.Data.G {
-		d.G[k] = &Global{}
-	}
+	d.G = &Global{}
 	for k := range d.Data.States {
 		d.States[k] = &LState{}
 	}
@@ -815,23 +801,8 @@ func (d *dumpLoader) init() {
 	}
 }
 
-func (d *dumpLoader) load() error {
-	for _, g := range d.Data.G {
-		d.loadState(g.MainThread)
-		return nil
-	}
-	return fmt.Errorf("main thread not found")
-}
-
 func LoadDump(d dump.Data, ctx context.Context) (*LState, error) {
 	ld := dumpLoader{Data: d, ctx: ctx}
 	ld.init()
-	err := ld.load()
-	if err != nil {
-		return nil, err
-	}
-	for _, v := range ld.G {
-		return v.CurrentThread, nil
-	}
-	return nil, fmt.Errorf("Global not found")
+	return ld.loadState(ld.Data.G.CurrentThread), nil
 }

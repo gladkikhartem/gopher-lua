@@ -41,10 +41,12 @@ type CallFrame struct {
 
 type CallFrameStack struct {
 	Array []Ptr `json:",omitempty"`
+	Len   int   `json:",omitempty"`
 	Sp    int   `json:",omitempty"`
 }
 type Registry struct {
 	Array []Value `json:",omitempty"`
+	Len   int     `json:",omitempty"`
 	Top   int     `json:",omitempty"`
 	//alloc *allocator
 }
@@ -101,7 +103,7 @@ type State struct {
 }
 
 type Data struct {
-	G               map[Ptr]*Global         `json:",omitempty"` //for consistency
+	G               *Global                 `json:",omitempty"` //for consistency
 	States          map[Ptr]*State          `json:",omitempty"`
 	Tables          map[Ptr]*Table          `json:",omitempty"`
 	CallFrames      map[Ptr]*CallFrame      `json:",omitempty"`
