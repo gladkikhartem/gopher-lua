@@ -78,11 +78,9 @@ func (d *dumper) dumpLValue(lv LValue, name string) dump.Value {
 		return dump.Value{Type: int(LTTable), Ptr: d.dumpTable(v, name)}
 	case *LUserData:
 		return dump.Value{Type: int(LTUserData), Ptr: d.dumpUserData(v, name)}
-	case nil:
+	default:
 		return dump.Value{Type: int(LTNil)}
 	}
-	log.Printf("unknown type: %T", lv)
-	return dump.Value{Type: int(LTNil)}
 }
 
 func (d *dumpLoader) loadLValue(vv dump.Value) (LValue, error) {
@@ -347,7 +345,6 @@ func (d *dumper) dumpRegistry(r *registry, name string) (ptr dump.Ptr) {
 		if r.array[i] == nil {
 			continue
 		}
-		log.Print(reflect.TypeOf(r.array[i]))
 		dr.Array = dr.Array[:i+1]
 		break
 	}
