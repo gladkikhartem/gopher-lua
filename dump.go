@@ -1,7 +1,7 @@
 package lua
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"reflect"
@@ -75,6 +75,8 @@ func (d *dumper) dumpLValue(lv LValue, name string) dump.Value {
 		return dump.Value{Type: int(LTThread), Ptr: d.dumpState(v, name)}
 	case *LTable:
 		return dump.Value{Type: int(LTTable), Ptr: d.dumpTable(v, name)}
+	case *LUserData:
+		return dump.Value{Type: int(LTUserData), Ptr: d.dumpUserData(v, name)}
 	case nil:
 		return dump.Value{Type: int(LTNil)}
 	}
@@ -82,30 +84,29 @@ func (d *dumper) dumpLValue(lv LValue, name string) dump.Value {
 	return dump.Value{Type: int(LTNil)}
 }
 
-func (d *dumpLoader) loadLValue(vv dump.Value) LValue {
+func (d *dumpLoader) loadLValue(vv dump.Value) (LValue, error) {
 	switch LValueType(vv.Type) {
 	case LTBool:
 		v := LBool(vv.Bool)
-		return v
+		return v, nil
 	case LTNumber:
 		v := LNumber(vv.Number)
-		return v
+		return v, nil
 	case LTString:
 		v := LString(vv.String)
-		return v
+		return v, nil
 	case LTNil:
 		v := LNilType{}
-		return &v
+		return &v, nil
 	case LTFunction:
 		return d.loadFunction(vv.Ptr)
 	case LTThread:
 		return d.loadState(vv.Ptr)
 	case LTTable:
 		return d.loadTable(vv.Ptr)
+	default:
+		return nil, fmt.Errorf("unsupported type: %v", vv.Type)
 	}
-	d.Errors = append(d.Errors, fmt.Errorf("unsupported type: %v", vv.Type))
-	v := LNilType{}
-	return &v
 }
 
 func (d *dumper) dumpState(s *LState, name string) (ptr dump.Ptr) {
@@ -139,21 +140,30 @@ func (d *dumper) dumpState(s *LState, name string) (ptr dump.Ptr) {
 	return
 }
 
-func (d *dumpLoader) loadState(ptr dump.Ptr) *LState {
+func (d *dumpLoader) loadState(ptr dump.Ptr) (*LState, error) {
 	if ptr == "" {
-		return nil
+		return nil, fmt.Errorf("empty state pointer")
 	}
 	s := d.States[ptr]
 	ds := d.Data.States[ptr]
 	id := fmt.Sprint("lstate-", ptr)
 	if d.Loaded[id] {
-		return s
+		return s, nil
 	}
 	d.Loaded[id] = true
-
-	s.G = d.loadGlobal(ds.G)
-	s.Parent = d.loadState(ds.Parent)
-	s.Env = d.loadTable(ds.Env)
+	var err error
+	s.G, err = d.loadGlobal(ds.G)
+	if err != nil {
+		return nil, err
+	}
+	s.Parent, err = d.loadState(ds.Parent)
+	if err != nil {
+		return s, err
+	}
+	s.Env, err = d.loadTable(ds.Env)
+	if err != nil {
+		return nil, err
+	}
 	s.Options = Options{
 		CallStackSize:       ds.Options.CallStackSize,
 		RegistrySize:        ds.Options.RegistrySize,
@@ -161,9 +171,18 @@ func (d *dumpLoader) loadState(ptr dump.Ptr) *LState {
 		IncludeGoStackTrace: ds.Options.IncludeGoStackTrace,
 	}
 	s.stop = ds.Stop
-	s.reg = d.loadRegistry(ds.Reg)
-	s.currentFrame = d.loadCallFrame(ds.CurrentFrame)
-	s.stack = d.loadCallFrameStack(ds.Stack)
+	s.reg, err = d.loadRegistry(ds.Reg)
+	if err != nil {
+		return nil, err
+	}
+	s.currentFrame, err = d.loadCallFrame(ds.CurrentFrame)
+	if err != nil {
+		return nil, err
+	}
+	s.stack, err = d.loadCallFrameStack(ds.Stack)
+	if err != nil {
+		return nil, err
+	}
 	changedRef, ok := d.cfParents[s.currentFrame] // check if s.currentFrame points to callFrame Stack
 	if ok {
 		s.currentFrame = changedRef
@@ -181,7 +200,10 @@ func (d *dumpLoader) loadState(ptr dump.Ptr) *LState {
 	}
 
 	s.wrapped = ds.Wrapped
-	s.uvcache = d.loadUpvalue(ds.UVCache)
+	s.uvcache, err = d.loadUpvalue(ds.UVCache)
+	if err != nil {
+		return nil, err
+	}
 	s.hasErrorFunc = ds.HasErrorFunc
 	s.Dead = ds.Dead
 	s.alloc = d.alloc
@@ -190,12 +212,8 @@ func (d *dumpLoader) loadState(ptr dump.Ptr) *LState {
 	} else {
 		s.Panic = panicWithoutTraceback
 	}
-	if d.ctx != nil {
-		s.SetContext(d.ctx)
-	} else {
-		s.mainLoop = mainLoop
-	}
-	return s
+	s.mainLoop = mainLoop
+	return s, nil
 }
 
 func (d *dumper) dumpGlobal(g *Global) {
@@ -215,21 +233,37 @@ func (d *dumper) dumpGlobal(g *Global) {
 	return
 }
 
-func (d *dumpLoader) loadGlobal(ptr dump.Ptr) *Global {
+func (d *dumpLoader) loadGlobal(ptr dump.Ptr) (*Global, error) {
 	if d.G.MainThread != nil {
-		return d.G
+		return d.G, nil
 	}
-	d.G.MainThread = d.loadState(d.Data.G.MainThread)
-	d.G.CurrentThread = d.loadState(d.Data.G.CurrentThread)
-	d.G.Registry = d.loadTable(d.Data.G.Registry)
-	d.G.Global = d.loadTable(d.Data.G.Global)
+	var err error
+	d.G.MainThread, err = d.loadState(d.Data.G.MainThread)
+	if err != nil {
+		return nil, err
+	}
+	d.G.CurrentThread, err = d.loadState(d.Data.G.CurrentThread)
+	if err != nil {
+		return nil, err
+	}
+	d.G.Registry, err = d.loadTable(d.Data.G.Registry)
+	if err != nil {
+		return nil, err
+	}
+	d.G.Global, err = d.loadTable(d.Data.G.Global)
+	if err != nil {
+		return nil, err
+	}
 	d.G.gccount = d.Data.G.Gccount
 	d.G.builtinMts = map[int]LValue{}
 	for k, v := range d.Data.G.BuiltinMts {
 		intk, _ := strconv.Atoi(k)
-		d.G.builtinMts[intk] = d.loadLValue(v)
+		d.G.builtinMts[intk], err = d.loadLValue(v)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return d.G
+	return d.G, nil
 }
 
 func (d *dumper) dumpCallFrame(cf *callFrame, name string) (ptr dump.Ptr) {
@@ -257,21 +291,28 @@ func (d *dumper) dumpCallFrame(cf *callFrame, name string) (ptr dump.Ptr) {
 	return
 }
 
-func (d *dumpLoader) loadCallFrame(ptr dump.Ptr) *callFrame {
+func (d *dumpLoader) loadCallFrame(ptr dump.Ptr) (*callFrame, error) {
 	if ptr == "" {
-		return nil
+		return nil, fmt.Errorf("empty callFrame pointer")
 	}
 	cf := d.CallFrames[ptr]
 	dcf := d.Data.CallFrames[ptr]
 	id := fmt.Sprint("callframe-", ptr)
 	if d.Loaded[id] {
-		return cf
+		return cf, nil
 	}
 	d.Loaded[id] = true
 
+	var err error
 	cf.Idx = dcf.Idx
-	cf.Fn = d.loadFunction(dcf.Fn)
-	cf.Parent = d.loadCallFrame(dcf.Parent) // TODO: fix pointer to callFrames[] array ???
+	cf.Fn, err = d.loadFunction(dcf.Fn)
+	if err != nil {
+		return nil, err
+	}
+	cf.Parent, err = d.loadCallFrame(dcf.Parent) // TODO: fix pointer to callFrames[] array ???
+	if err != nil {
+		return nil, err
+	}
 	cf.Pc = dcf.Pc
 	cf.Base = dcf.Base
 	cf.LocalBase = dcf.LocalBase
@@ -280,7 +321,7 @@ func (d *dumpLoader) loadCallFrame(ptr dump.Ptr) *callFrame {
 	cf.NRet = dcf.NRet
 	cf.TailCall = dcf.TailCall
 
-	return cf
+	return cf, nil
 }
 
 func (d *dumper) dumpRegistry(r *registry, name string) (ptr dump.Ptr) {
@@ -313,26 +354,29 @@ func (d *dumper) dumpRegistry(r *registry, name string) (ptr dump.Ptr) {
 	return
 }
 
-func (d *dumpLoader) loadRegistry(ptr dump.Ptr) *registry {
+func (d *dumpLoader) loadRegistry(ptr dump.Ptr) (*registry, error) {
 	if ptr == "" {
-		return nil
+		return nil, fmt.Errorf("empty registry pointer")
 	}
 	r := d.Registries[ptr]
 	dr := d.Data.Registries[ptr]
 	id := fmt.Sprint("registry-", ptr)
 	if d.Loaded[id] {
-		return r
+		return r, nil
 	}
 	d.Loaded[id] = true
 
+	var err error
 	r.alloc = d.alloc
 	r.top = dr.Top
 	r.array = make([]LValue, dr.Len)
 	for i, v := range dr.Array {
-		r.array[i] = d.loadLValue(v)
+		r.array[i], err = d.loadLValue(v)
+		if err != nil {
+			return nil, err
+		}
 	}
-
-	return r
+	return r, nil
 }
 
 func (d *dumper) dumpCallFrameStack(cfs *callFrameStack, name string) (ptr dump.Ptr) {
@@ -364,27 +408,30 @@ func (d *dumper) dumpCallFrameStack(cfs *callFrameStack, name string) (ptr dump.
 	return
 }
 
-func (d *dumpLoader) loadCallFrameStack(ptr dump.Ptr) *callFrameStack {
+func (d *dumpLoader) loadCallFrameStack(ptr dump.Ptr) (*callFrameStack, error) {
 	if ptr == "" {
-		return nil
+		return nil, fmt.Errorf("empty callframestack pointer")
 	}
 	cfs := d.CallFrameStacks[ptr]
 	dcfs := d.Data.CallFrameStacks[ptr]
 	id := fmt.Sprint("callframestack-", ptr)
 	if d.Loaded[id] {
-		return cfs
+		return cfs, nil
 	}
 	d.Loaded[id] = true
 
 	cfs.sp = dcfs.Sp
 	cfs.array = make([]callFrame, dcfs.Len)
 	for i, v := range dcfs.Array {
-		pv := d.loadCallFrame(v)
+		pv, err := d.loadCallFrame(v)
+		if err != nil {
+			return nil, err
+		}
 		cfs.array[i] = *pv
 		d.cfParents[pv] = &cfs.array[i]
 	}
 
-	return cfs
+	return cfs, nil
 }
 
 func (d *dumper) dumpUpvalue(uv *Upvalue, name string) (ptr dump.Ptr) {
@@ -407,25 +454,34 @@ func (d *dumper) dumpUpvalue(uv *Upvalue, name string) (ptr dump.Ptr) {
 	return
 }
 
-func (d *dumpLoader) loadUpvalue(ptr dump.Ptr) *Upvalue {
+func (d *dumpLoader) loadUpvalue(ptr dump.Ptr) (*Upvalue, error) {
 	if ptr == "" {
-		return nil
+		return nil, fmt.Errorf("empty upvalue pointer")
 	}
 	uv := d.Upvalues[ptr]
 	duv := d.Data.Upvalues[ptr]
 	id := fmt.Sprint("upvalue-", ptr)
 	if d.Loaded[id] {
-		return uv
+		return uv, nil
 	}
 	d.Loaded[id] = true
 
-	uv.next = d.loadUpvalue(duv.Next)
-	uv.reg = d.loadRegistry(duv.Reg)
+	var err error
+	uv.next, err = d.loadUpvalue(duv.Next)
+	if err != nil {
+		return nil, err
+	}
+	uv.reg, err = d.loadRegistry(duv.Reg)
+	if err != nil {
+		return nil, err
+	}
 	uv.index = duv.Index
-	uv.value = d.loadLValue(duv.Value)
+	uv.value, err = d.loadLValue(duv.Value)
+	if err != nil {
+		return nil, err
+	}
 	uv.closed = duv.Closed
-
-	return uv
+	return uv, nil
 }
 
 func (d *dumper) dumpFunction(f *LFunction, name string) (ptr dump.Ptr) {
@@ -451,27 +507,39 @@ func (d *dumper) dumpFunction(f *LFunction, name string) (ptr dump.Ptr) {
 	return
 }
 
-func (d *dumpLoader) loadFunction(ptr dump.Ptr) *LFunction {
+func (d *dumpLoader) loadFunction(ptr dump.Ptr) (*LFunction, error) {
 	if ptr == "" {
-		return nil
+		return nil, fmt.Errorf("empty function pointer")
 	}
 	f := d.Functions[ptr]
 	df := d.Data.Functions[ptr]
 	id := fmt.Sprint("function-", ptr)
 	if d.Loaded[id] {
-		return f
+		return f, nil
 	}
 	d.Loaded[id] = true
-
+	var err error
 	f.IsG = df.IsG
-	f.Env = d.loadTable(df.Env)
-	f.Proto = d.loadFunctionProto(df.Proto)
-	f.GFunction = d.loadGFunction(df.GFunction) // TODO: CAREFUL
+	f.Env, err = d.loadTable(df.Env)
+	if err != nil {
+		return nil, err
+	}
+	f.Proto, err = d.loadFunctionProto(df.Proto)
+	if err != nil {
+		return nil, err
+	}
+	f.GFunction, err = d.loadGFunction(df.GFunction) // TODO: CAREFUL
+	if err != nil {
+		return nil, err
+	}
 	f.Upvalues = make([]*Upvalue, len(df.Upvalues))
 	for i, v := range df.Upvalues {
-		f.Upvalues[i] = d.loadUpvalue(v)
+		f.Upvalues[i], err = d.loadUpvalue(v)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return f
+	return f, nil
 }
 
 func (d *dumper) dumpFunctionProto(fp *FunctionProto, name string) (ptr dump.Ptr) {
@@ -519,18 +587,18 @@ func (d *dumper) dumpFunctionProto(fp *FunctionProto, name string) (ptr dump.Ptr
 	return
 }
 
-func (d *dumpLoader) loadFunctionProto(ptr dump.Ptr) *FunctionProto {
+func (d *dumpLoader) loadFunctionProto(ptr dump.Ptr) (*FunctionProto, error) {
 	if ptr == "" {
-		return nil
+		return nil, fmt.Errorf("emptyr function proto pointer")
 	}
 	fp := d.FunctionProtos[ptr]
 	dfp := d.Data.FunctionProtos[ptr]
 	id := fmt.Sprint("functionproto-", ptr)
 	if d.Loaded[id] {
-		return fp
+		return fp, nil
 	}
 	d.Loaded[id] = true
-
+	var err error
 	fp.SourceName = dfp.SourceName
 	fp.LineDefined = dfp.LineDefined
 	fp.LastLineDefined = dfp.LastLineDefined
@@ -545,11 +613,17 @@ func (d *dumpLoader) loadFunctionProto(ptr dump.Ptr) *FunctionProto {
 
 	fp.Constants = make([]LValue, len(dfp.Constants))
 	for i, v := range dfp.Constants {
-		fp.Constants[i] = d.loadLValue(v)
+		fp.Constants[i], err = d.loadLValue(v)
+		if err != nil {
+			return nil, err
+		}
 	}
 	fp.FunctionPrototypes = make([]*FunctionProto, len(dfp.FunctionPrototypes))
 	for i, v := range dfp.FunctionPrototypes {
-		fp.FunctionPrototypes[i] = d.loadFunctionProto(v)
+		fp.FunctionPrototypes[i], err = d.loadFunctionProto(v)
+		if err != nil {
+			return nil, err
+		}
 	}
 	fp.DbgCalls = make([]DbgCall, len(dfp.DbgCalls))
 	for i, v := range dfp.DbgCalls {
@@ -559,10 +633,13 @@ func (d *dumpLoader) loadFunctionProto(ptr dump.Ptr) *FunctionProto {
 	}
 	fp.DbgLocals = make([]*DbgLocalInfo, len(dfp.DbgLocals))
 	for i, v := range dfp.DbgLocals {
-		fp.DbgLocals[i] = d.loadDbgLocalInfo(v)
+		fp.DbgLocals[i], err = d.loadDbgLocalInfo(v)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	return fp
+	return fp, nil
 }
 
 func (d *dumper) dumpDbgLocalInfo(li *DbgLocalInfo, name string) (ptr dump.Ptr) {
@@ -583,15 +660,15 @@ func (d *dumper) dumpDbgLocalInfo(li *DbgLocalInfo, name string) (ptr dump.Ptr) 
 	return
 }
 
-func (d *dumpLoader) loadDbgLocalInfo(ptr dump.Ptr) *DbgLocalInfo {
+func (d *dumpLoader) loadDbgLocalInfo(ptr dump.Ptr) (*DbgLocalInfo, error) {
 	if ptr == "" {
-		return nil
+		return nil, fmt.Errorf("empty debug info pointer")
 	}
 	li := d.DbgLocalInfos[ptr]
 	dli := d.Data.DbgLocalInfos[ptr]
 	id := fmt.Sprint("dbglocal-", ptr)
 	if d.Loaded[id] {
-		return li
+		return li, nil
 	}
 	d.Loaded[id] = true
 
@@ -599,7 +676,7 @@ func (d *dumpLoader) loadDbgLocalInfo(ptr dump.Ptr) *DbgLocalInfo {
 	li.Name = dli.Name
 	li.StartPc = dli.StartPc
 
-	return li
+	return li, nil
 }
 
 func (d *dumper) dumpTable(t *LTable, name string) (ptr dump.Ptr) {
@@ -632,44 +709,106 @@ func (d *dumper) dumpTable(t *LTable, name string) (ptr dump.Ptr) {
 	return
 }
 
-func (d *dumpLoader) loadTable(ptr dump.Ptr) *LTable {
+func (d *dumpLoader) loadTable(ptr dump.Ptr) (*LTable, error) {
 	if ptr == "" {
-		return nil
+		return nil, fmt.Errorf("empty table pointer")
 	}
 	t, ok := d.Tables[ptr]
 	if !ok {
-		log.Printf("table not found! %v %v %#v", ok, ptr, d.Tables)
+		return nil, fmt.Errorf("table not found! %v %v %#v", ok, ptr, d.Tables)
 	}
 	dt := d.Data.Tables[ptr]
 	id := fmt.Sprint("table-", ptr)
 	if d.Loaded[id] {
-		return t
+		return t, nil
 	}
 	d.Loaded[id] = true
-
-	t.Metatable = d.loadLValue(dt.Metatable)
+	var err error
+	t.Metatable, err = d.loadLValue(dt.Metatable)
+	if err != nil {
+		return nil, err
+	}
 	t.array = make([]LValue, len(dt.Array))
 	for i, v := range dt.Array {
-		t.array[i] = d.loadLValue(v)
+		t.array[i], err = d.loadLValue(v)
+		if err != nil {
+			return nil, err
+		}
 	}
 	t.k2i = map[LValue]int{}
 	t.dict = map[LValue]LValue{}
 	t.keys = []LValue{}
 	for _, pair := range dt.Dict {
-		k := d.loadLValue(pair.Key)
-		v := d.loadLValue(pair.Value)
+		k, err := d.loadLValue(pair.Key)
+		if err != nil {
+			return nil, err
+		}
+		v, err := d.loadLValue(pair.Value)
+		if err != nil {
+			return nil, err
+		}
 		t.dict[k] = v
 		t.k2i[k] = len(t.keys)
 		t.keys = append(t.keys, k)
 	}
 	t.strdict = map[string]LValue{}
 	for k, v := range dt.Strdict {
-		t.strdict[k] = d.loadLValue(v)
+		t.strdict[k], err = d.loadLValue(v)
+		if err != nil {
+			return nil, err
+		}
 		lkey := LString(k)
 		t.k2i[lkey] = len(t.keys)
 		t.keys = append(t.keys, lkey)
 	}
-	return t
+	return t, nil
+}
+
+func (d *dumper) dumpUserData(t *LUserData, name string) (ptr dump.Ptr) {
+	if t == nil {
+		return
+	}
+	ptr = d.getPtr(t, name)
+	_, ok := d.d.UserData[ptr]
+	if ok {
+		return
+	}
+	var ud dump.UserData
+	d.d.UserData[ptr] = &ud // avoid infinite recursion
+	raw, err := json.Marshal(t.Value)
+	if err != nil {
+		raw = []byte("{}")
+	}
+	ud.Data = raw
+	ud.Type = fmt.Sprint(reflect.TypeOf(t.Value))
+	return
+}
+
+func (d *dumpLoader) loadUserData(ptr dump.Ptr) (*LUserData, error) {
+	if ptr == "" {
+		return nil, fmt.Errorf("empty user data pointer")
+	}
+	t, ok := d.UserData[ptr]
+	if !ok {
+		log.Printf("userdata not found! %v %v %#v", ok, ptr, d.Tables)
+	}
+	dt := d.Data.UserData[ptr]
+	id := fmt.Sprint("userdata-", ptr)
+	if d.Loaded[id] {
+		return t, nil
+	}
+	d.Loaded[id] = true
+	var err error
+	t.Value, err = d.userDataParse(*dt)
+	type LUserData struct {
+		Value     interface{}
+		Env       *LTable
+		Metatable LValue
+	}
+	if err != nil {
+		panic(err)
+	}
+	return t, nil
 }
 
 func (d *dumper) dumpGFunction(gf LGFunction, name string) (ptr dump.Ptr) {
@@ -690,30 +829,18 @@ func (d *dumper) dumpGFunction(gf LGFunction, name string) (ptr dump.Ptr) {
 	return
 }
 
-func (d *dumpLoader) loadGFunction(ptr dump.Ptr) LGFunction {
+func (d *dumpLoader) loadGFunction(ptr dump.Ptr) (LGFunction, error) {
 	if ptr == "" {
-		return nil
+		return nil, fmt.Errorf("empty Gfunction pointer")
 	}
 	gf := d.GFunctions[ptr]
 	dgf := d.Data.GFunctions[ptr]
 	id := fmt.Sprint("gfunction-", ptr)
 	if d.Loaded[id] {
-		return gf
+		return gf, nil
 	}
 	d.Loaded[id] = true
-
-	if dgf.Name == "github.com/gladkikhartem/gopher-lua.basePrint" {
-		return basePrint
-	}
-	return func(*LState) int {
-		log.Printf("TODO: LOAD EXTERNAL FUNCTION %v \n %v:%v ", dgf.Name, dgf.File, dgf.Line)
-		return 0
-	}
-	//f := runtime.FuncForPC(reflect.ValueOf(gf).Pointer())
-	//dgf.Name = f.Name()
-	//dgf.File, dgf.Line = f.FileLine(reflect.ValueOf(gf).Pointer())
-
-	return gf
+	return d.funcParse(*dgf)
 }
 
 func (d dumper) getPtr(ptr interface{}, prefix string) dump.Ptr {
@@ -744,6 +871,7 @@ type dumpLoader struct {
 	G               *Global         //for consistency
 	States          map[dump.Ptr]*LState
 	Tables          map[dump.Ptr]*LTable
+	UserData        map[dump.Ptr]*LUserData
 	CallFrames      map[dump.Ptr]*callFrame
 	CallFrameStacks map[dump.Ptr]*callFrameStack
 	Registries      map[dump.Ptr]*registry
@@ -753,8 +881,9 @@ type dumpLoader struct {
 	DbgLocalInfos   map[dump.Ptr]*DbgLocalInfo
 	Upvalues        map[dump.Ptr]*Upvalue
 	cfParents       map[*callFrame]*callFrame
-	ctx             context.Context
 	alloc           *allocator
+	funcParse       GFunctionParser
+	userDataParse   UserDataParser
 }
 
 func (d *dumpLoader) init() {
@@ -799,10 +928,16 @@ func (d *dumpLoader) init() {
 	for k := range d.Data.Upvalues {
 		d.Upvalues[k] = &Upvalue{}
 	}
+	for k := range d.Data.UserData {
+		d.UserData[k] = &LUserData{}
+	}
 }
 
-func LoadDump(d dump.Data, ctx context.Context) (*LState, error) {
-	ld := dumpLoader{Data: d, ctx: ctx}
+type GFunctionParser func(dump.GFunction) (LGFunction, error)
+type UserDataParser func(dump.UserData) (interface{}, error)
+
+func LoadDump(d dump.Data, f GFunctionParser, u UserDataParser) (*LState, error) {
+	ld := dumpLoader{Data: d, funcParse: f, userDataParse: u}
 	ld.init()
-	return ld.loadState(ld.Data.G.CurrentThread), nil
+	return ld.loadState(ld.Data.G.CurrentThread)
 }

@@ -1,5 +1,7 @@
 package dump
 
+import "encoding/json"
+
 type Type int
 
 const (
@@ -102,10 +104,15 @@ type State struct {
 	//Ctx          context.Context
 }
 
+type UserData struct {
+	Type string
+	Data json.RawMessage
+}
 type Data struct {
 	G               *Global                 `json:",omitempty"` //for consistency
 	States          map[Ptr]*State          `json:",omitempty"`
 	Tables          map[Ptr]*Table          `json:",omitempty"`
+	UserData        map[Ptr]*UserData       `json:",omitempty"`
 	CallFrames      map[Ptr]*CallFrame      `json:",omitempty"`
 	CallFrameStacks map[Ptr]*CallFrameStack `json:",omitempty"`
 	Registries      map[Ptr]*Registry       `json:",omitempty"`
