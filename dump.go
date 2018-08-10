@@ -42,6 +42,7 @@ func (s *LState) Dump() dump.Data {
 			FunctionProtos:  make(map[dump.Ptr]*dump.FunctionProto),
 			DbgLocalInfos:   make(map[dump.Ptr]*dump.DbgLocalInfo),
 			Upvalues:        make(map[dump.Ptr]*dump.Upvalue),
+			UserData:        make(map[dump.Ptr]*dump.UserData),
 		},
 		prefixCount: make(map[string]int),
 		ptrMap:      make(map[string]string),
