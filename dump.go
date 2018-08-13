@@ -27,7 +27,7 @@ to track values in diff across the time
 
 
 */
-func (s *LState) Dump(h DumpHelper) dump.Data {
+func (s *LState) Dump(du DumpUserData) dump.Data {
 	d := dumper{
 		d: dump.Data{
 			States:          make(map[dump.Ptr]*dump.State),
@@ -36,7 +36,6 @@ func (s *LState) Dump(h DumpHelper) dump.Data {
 			CallFrameStacks: make(map[dump.Ptr]*dump.CallFrameStack),
 			Registries:      make(map[dump.Ptr]*dump.Registry),
 			Functions:       make(map[dump.Ptr]*dump.Function),
-			GFunctions:      make(map[dump.Ptr]*dump.GFunction),
 			FunctionProtos:  make(map[dump.Ptr]*dump.FunctionProto),
 			DbgLocalInfos:   make(map[dump.Ptr]*dump.DbgLocalInfo),
 			Upvalues:        make(map[dump.Ptr]*dump.Upvalue),
@@ -44,7 +43,7 @@ func (s *LState) Dump(h DumpHelper) dump.Data {
 		},
 		prefixCount: make(map[string]int),
 		ptrMap:      make(map[string]string),
-		helper:      h,
+		dumpData:    du,
 	}
 	d.dumpState(s, "dumpState")
 	return d.d
@@ -52,7 +51,7 @@ func (s *LState) Dump(h DumpHelper) dump.Data {
 
 type dumper struct {
 	d           dump.Data
-	helper      DumpHelper
+	dumpData    DumpUserData
 	ptrMap      map[string]string
 	prefixCount map[string]int
 }
@@ -499,7 +498,6 @@ func (d *dumper) dumpFunction(f *LFunction, name string) (ptr dump.Ptr) {
 	df.IsG = f.IsG
 	df.Env = d.dumpTable(f.Env, string(ptr)+".env")
 	df.Proto = d.dumpFunctionProto(f.Proto, string(ptr)+".proto")
-	df.GFunction = d.dumpGFunction(f.GFunction, string(ptr)+".gf")
 	df.Upvalues = make([]dump.Ptr, len(f.Upvalues))
 	for i, v := range f.Upvalues {
 		df.Upvalues[i] = d.dumpUpvalue(v, fmt.Sprintf("%v.upv.[%v]", ptr, i))
@@ -526,11 +524,6 @@ func (d *dumpLoader) loadFunction(ptr dump.Ptr) (*LFunction, error) {
 	}
 	if df.Proto != "" {
 		f.Proto, err = d.loadFunctionProto(df.Proto)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		f.GFunction, err = d.loadGFunction(df.GFunction) // TODO: CAREFUL
 		if err != nil {
 			return nil, err
 		}
@@ -778,7 +771,7 @@ func (d *dumper) dumpUserData(t *LUserData, name string) (ptr dump.Ptr) {
 	}
 	var ud dump.UserData
 	d.d.UserData[ptr] = &ud // avoid infinite recursion
-	ud = d.helper.DumpUserData(t.Value)
+	ud = d.dumpData(t.Value)
 	return
 }
 
@@ -797,44 +790,11 @@ func (d *dumpLoader) loadUserData(ptr dump.Ptr) (*LUserData, error) {
 	}
 	d.Loaded[id] = true
 	var err error
-	t.Value, err = d.helper.ParseUserData(d.G.MainThread, *dt)
-	type LUserData struct {
-		Value     interface{}
-		Env       *LTable
-		Metatable LValue
-	}
+	t, err = d.parseData(d.G.MainThread, *dt)
 	if err != nil {
 		return nil, err
 	}
 	return t, nil
-}
-
-func (d *dumper) dumpGFunction(gf LGFunction, name string) (ptr dump.Ptr) {
-	if gf == nil {
-		return
-	}
-	ptr = d.getPtr(gf, name)
-	_, ok := d.d.GFunctions[ptr]
-	if ok {
-		return
-	}
-	dgf := d.helper.DumpFunc(gf)
-	d.d.GFunctions[ptr] = &dgf // avoid infinite recursion
-	return
-}
-
-func (d *dumpLoader) loadGFunction(ptr dump.Ptr) (LGFunction, error) {
-	if ptr == "" {
-		return nil, nil
-	}
-	gf := d.GFunctions[ptr]
-	dgf := d.Data.GFunctions[ptr]
-	id := fmt.Sprint("gfunction-", ptr)
-	if d.Loaded[id] {
-		return gf, nil
-	}
-	d.Loaded[id] = true
-	return d.helper.ParseFunc(d.G.MainThread, *dgf)
 }
 
 func (d dumper) getPtr(ptr interface{}, prefix string) dump.Ptr {
@@ -870,13 +830,12 @@ type dumpLoader struct {
 	CallFrameStacks map[dump.Ptr]*callFrameStack
 	Registries      map[dump.Ptr]*registry
 	Functions       map[dump.Ptr]*LFunction
-	GFunctions      map[dump.Ptr]LGFunction
 	FunctionProtos  map[dump.Ptr]*FunctionProto
 	DbgLocalInfos   map[dump.Ptr]*DbgLocalInfo
 	Upvalues        map[dump.Ptr]*Upvalue
 	cfParents       map[*callFrame]*callFrame
 	alloc           *allocator
-	helper          ParseHelper
+	parseData       ParseUserData
 }
 
 func (d *dumpLoader) init() {
@@ -888,7 +847,6 @@ func (d *dumpLoader) init() {
 	d.CallFrameStacks = make(map[dump.Ptr]*callFrameStack)
 	d.Registries = make(map[dump.Ptr]*registry)
 	d.Functions = make(map[dump.Ptr]*LFunction)
-	d.GFunctions = make(map[dump.Ptr]LGFunction)
 	d.FunctionProtos = make(map[dump.Ptr]*FunctionProto)
 	d.DbgLocalInfos = make(map[dump.Ptr]*DbgLocalInfo)
 	d.Upvalues = make(map[dump.Ptr]*Upvalue)
@@ -927,17 +885,11 @@ func (d *dumpLoader) init() {
 	}
 }
 
-type ParseHelper interface {
-	ParseFunc(*LState, dump.GFunction) (LGFunction, error)
-	ParseUserData(*LState, dump.UserData) (interface{}, error)
-}
-type DumpHelper interface {
-	DumpFunc(LGFunction) dump.GFunction
-	DumpUserData(interface{}) dump.UserData
-}
+type ParseUserData func(*LState, dump.UserData) (*LUserData, error)
+type DumpUserData func(interface{}) dump.UserData
 
-func LoadDump(d dump.Data, h ParseHelper) (*LState, error) {
-	ld := dumpLoader{Data: d, helper: h}
+func LoadDump(d dump.Data, p ParseUserData) (*LState, error) {
+	ld := dumpLoader{Data: d, parseData: p}
 	ld.init()
 	return ld.loadState(ld.Data.G.CurrentThread)
 }

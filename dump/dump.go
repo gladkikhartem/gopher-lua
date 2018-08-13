@@ -117,7 +117,6 @@ type Data struct {
 	CallFrameStacks map[Ptr]*CallFrameStack `json:",omitempty"`
 	Registries      map[Ptr]*Registry       `json:",omitempty"`
 	Functions       map[Ptr]*Function       `json:",omitempty"`
-	GFunctions      map[Ptr]*GFunction      `json:",omitempty"`
 	FunctionProtos  map[Ptr]*FunctionProto  `json:",omitempty"`
 	DbgLocalInfos   map[Ptr]*DbgLocalInfo   `json:",omitempty"`
 	Upvalues        map[Ptr]*Upvalue        `json:",omitempty"`
