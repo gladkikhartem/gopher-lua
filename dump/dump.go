@@ -157,9 +157,8 @@ type Function struct {
 }
 
 type GFunction struct {
-	Name string `json:",omitempty"`
-	File string `json:",omitempty"`
-	Line int    `json:",omitempty"`
+	Name  string          `json:",omitempty"`
+	Bound json.RawMessage `json:",omitempty"`
 }
 
 type VV struct {

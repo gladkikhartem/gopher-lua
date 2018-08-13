@@ -1,11 +1,9 @@
 package lua
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"reflect"
-	"runtime"
 	"strconv"
 
 	"github.com/gladkikhartem/gopher-lua/dump"
@@ -29,7 +27,7 @@ to track values in diff across the time
 
 
 */
-func (s *LState) Dump() dump.Data {
+func (s *LState) Dump(h DumpHelper) dump.Data {
 	d := dumper{
 		d: dump.Data{
 			States:          make(map[dump.Ptr]*dump.State),
@@ -46,6 +44,7 @@ func (s *LState) Dump() dump.Data {
 		},
 		prefixCount: make(map[string]int),
 		ptrMap:      make(map[string]string),
+		helper:      h,
 	}
 	d.dumpState(s, "dumpState")
 	return d.d
@@ -53,6 +52,7 @@ func (s *LState) Dump() dump.Data {
 
 type dumper struct {
 	d           dump.Data
+	helper      DumpHelper
 	ptrMap      map[string]string
 	prefixCount map[string]int
 }
@@ -778,12 +778,7 @@ func (d *dumper) dumpUserData(t *LUserData, name string) (ptr dump.Ptr) {
 	}
 	var ud dump.UserData
 	d.d.UserData[ptr] = &ud // avoid infinite recursion
-	raw, err := json.Marshal(t.Value)
-	if err != nil {
-		raw = []byte("{}")
-	}
-	ud.Data = raw
-	ud.Type = fmt.Sprint(reflect.TypeOf(t.Value))
+	ud = d.helper.DumpUserData(t.Value)
 	return
 }
 
@@ -802,7 +797,7 @@ func (d *dumpLoader) loadUserData(ptr dump.Ptr) (*LUserData, error) {
 	}
 	d.Loaded[id] = true
 	var err error
-	t.Value, err = d.userDataParse(*dt)
+	t.Value, err = d.helper.ParseUserData(d.G.MainThread, *dt)
 	type LUserData struct {
 		Value     interface{}
 		Env       *LTable
@@ -823,12 +818,8 @@ func (d *dumper) dumpGFunction(gf LGFunction, name string) (ptr dump.Ptr) {
 	if ok {
 		return
 	}
-	dgf := dump.GFunction{}
+	dgf := d.helper.DumpFunc(gf)
 	d.d.GFunctions[ptr] = &dgf // avoid infinite recursion
-
-	f := runtime.FuncForPC(reflect.ValueOf(gf).Pointer())
-	dgf.Name = f.Name()
-	dgf.File, dgf.Line = f.FileLine(reflect.ValueOf(gf).Pointer())
 	return
 }
 
@@ -843,7 +834,7 @@ func (d *dumpLoader) loadGFunction(ptr dump.Ptr) (LGFunction, error) {
 		return gf, nil
 	}
 	d.Loaded[id] = true
-	return d.funcParse(*dgf)
+	return d.helper.ParseFunc(d.G.MainThread, *dgf)
 }
 
 func (d dumper) getPtr(ptr interface{}, prefix string) dump.Ptr {
@@ -885,8 +876,7 @@ type dumpLoader struct {
 	Upvalues        map[dump.Ptr]*Upvalue
 	cfParents       map[*callFrame]*callFrame
 	alloc           *allocator
-	funcParse       GFunctionParser
-	userDataParse   UserDataParser
+	helper          ParseHelper
 }
 
 func (d *dumpLoader) init() {
@@ -937,11 +927,17 @@ func (d *dumpLoader) init() {
 	}
 }
 
-type GFunctionParser func(dump.GFunction) (LGFunction, error)
-type UserDataParser func(dump.UserData) (interface{}, error)
+type ParseHelper interface {
+	ParseFunc(*LState, dump.GFunction) (LGFunction, error)
+	ParseUserData(*LState, dump.UserData) (interface{}, error)
+}
+type DumpHelper interface {
+	DumpFunc(LGFunction) dump.GFunction
+	DumpUserData(interface{}) dump.UserData
+}
 
-func LoadDump(d dump.Data, f GFunctionParser, u UserDataParser) (*LState, error) {
-	ld := dumpLoader{Data: d, funcParse: f, userDataParse: u}
+func LoadDump(d dump.Data, h ParseHelper) (*LState, error) {
+	ld := dumpLoader{Data: d, helper: h}
 	ld.init()
 	return ld.loadState(ld.Data.G.CurrentThread)
 }
