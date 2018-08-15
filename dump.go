@@ -27,7 +27,7 @@ to track values in diff across the time
 
 
 */
-func (s *LState) Dump(du DumpUserData) dump.Data {
+func (s *LState) Dump(du DumpUserData, df DumpGFunction) dump.Data {
 	d := dumper{
 		d: dump.Data{
 			States:          make(map[dump.Ptr]*dump.State),
@@ -41,19 +41,21 @@ func (s *LState) Dump(du DumpUserData) dump.Data {
 			Upvalues:        make(map[dump.Ptr]*dump.Upvalue),
 			UserData:        make(map[dump.Ptr]*dump.UserData),
 		},
-		prefixCount: make(map[string]int),
-		ptrMap:      make(map[string]string),
-		dumpData:    du,
+		prefixCount:   make(map[string]int),
+		ptrMap:        make(map[string]string),
+		dumpData:      du,
+		dumpGFunction: df,
 	}
 	d.dumpState(s, "dumpState")
 	return d.d
 }
 
 type dumper struct {
-	d           dump.Data
-	dumpData    DumpUserData
-	ptrMap      map[string]string
-	prefixCount map[string]int
+	d             dump.Data
+	dumpData      DumpUserData
+	dumpGFunction DumpGFunction
+	ptrMap        map[string]string
+	prefixCount   map[string]int
 }
 
 func (d *dumper) dumpLValue(lv LValue, name string) dump.Value {
@@ -497,6 +499,9 @@ func (d *dumper) dumpFunction(f *LFunction, name string) (ptr dump.Ptr) {
 
 	df.IsG = f.IsG
 	df.Env = d.dumpTable(f.Env, string(ptr)+".env")
+	if df.IsG {
+		df.GFunction = d.dumpGFunction(f.GFunction)
+	}
 	df.Proto = d.dumpFunctionProto(f.Proto, string(ptr)+".proto")
 	df.Upvalues = make([]dump.Ptr, len(f.Upvalues))
 	for i, v := range f.Upvalues {
@@ -518,6 +523,12 @@ func (d *dumpLoader) loadFunction(ptr dump.Ptr) (*LFunction, error) {
 	d.Loaded[id] = true
 	var err error
 	f.IsG = df.IsG
+	if f.IsG {
+		f.GFunction, err = d.parseFunction(df.GFunction)
+		if err != nil {
+			return nil, err
+		}
+	}
 	f.Env, err = d.loadTable(df.Env)
 	if err != nil {
 		return nil, err
@@ -836,6 +847,7 @@ type dumpLoader struct {
 	cfParents       map[*callFrame]*callFrame
 	alloc           *allocator
 	parseData       ParseUserData
+	parseFunction   ParseGFunction
 }
 
 func (d *dumpLoader) init() {
@@ -888,8 +900,11 @@ func (d *dumpLoader) init() {
 type ParseUserData func(*LState, dump.UserData) (*LUserData, error)
 type DumpUserData func(interface{}) dump.UserData
 
-func LoadDump(d dump.Data, p ParseUserData) (*LState, error) {
-	ld := dumpLoader{Data: d, parseData: p}
+type ParseGFunction func(dump.Ptr) (LGFunction, error)
+type DumpGFunction func(interface{}) dump.Ptr
+
+func LoadDump(d dump.Data, pd ParseUserData, pf ParseGFunction) (*LState, error) {
+	ld := dumpLoader{Data: d, parseData: pd, parseFunction: pf}
 	ld.init()
 	return ld.loadState(ld.Data.G.CurrentThread)
 }

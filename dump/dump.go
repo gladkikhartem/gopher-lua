@@ -104,10 +104,8 @@ type State struct {
 	//Ctx          context.Context
 }
 
-type UserData struct {
-	Type string
-	Data json.RawMessage
-}
+type UserData json.RawMessage
+
 type Data struct {
 	G               *Global                 `json:",omitempty"` //for consistency
 	States          map[Ptr]*State          `json:",omitempty"`
