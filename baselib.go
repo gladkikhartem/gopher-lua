@@ -16,14 +16,14 @@ func OpenBase(L *LState) int {
 	L.SetGlobal("_G", global)
 	L.SetGlobal("_VERSION", LString(LuaVersion))
 	L.SetGlobal("_GOPHER_LUA_VERSION", LString(PackageName+" "+PackageVersion))
-	basemod := L.RegisterModule("_G", baseFuncs)
+	basemod := L.RegisterModule("_G", BaseFuncs)
 	global.RawSetString("ipairs", L.NewClosure(baseIpairs, L.NewFunction(ipairsaux)))
 	global.RawSetString("pairs", L.NewClosure(basePairs, L.NewFunction(pairsaux)))
 	L.Push(basemod)
 	return 1
 }
 
-var baseFuncs = map[string]LGFunction{
+var BaseFuncs = map[string]LGFunction{
 	"assert":         baseAssert,
 	"collectgarbage": baseCollectGarbage,
 	"dofile":         baseDoFile,
