@@ -174,4 +174,5 @@ type Table struct {
 	Strdict   map[string]Value `json:",omitempty"`
 	Keys      []Value          `json:",omitempty"`
 	K2i       []VI             `json:",omitempty"`
+	dumped    bool
 }
